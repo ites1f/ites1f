@@ -3511,6 +3511,7 @@ input, select, textarea {
 
 	}
 /* --- Your custom contact form styles --- */
+/*
 #contact {
     padding: 40px;
     background: #f4f4f4;
@@ -3544,3 +3545,4 @@ input, select, textarea {
 #contact button:hover {
     filter: brightness(1.1);
 }
+*/
