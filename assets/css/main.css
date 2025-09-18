@@ -3510,3 +3510,37 @@ input, select, textarea {
 			}
 
 	}
+/* --- Your custom contact form styles --- */
+#contact {
+    padding: 40px;
+    background: #f4f4f4;
+    color: #222;
+}
+
+#contact form {
+    max-width: 500px;
+    margin: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+#contact input, #contact textarea {
+    margin: 8px 0;
+    padding: 10px;
+    font-size: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+}
+
+#contact button {
+    background: #4CAF50;
+    color: white;
+    border: none;
+    padding: 12px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+#contact button:hover {
+    filter: brightness(1.1);
+}
