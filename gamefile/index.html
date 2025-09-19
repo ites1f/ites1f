@@ -12,8 +12,8 @@
     *{box-sizing:border-box}
     html,body{height:100%}
     body{margin:0; font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, Apple Color Emoji, Segoe UI Emoji; color:var(--ink); background:radial-gradient(1200px 700px at 10% -10%, #12203b 0%, #0b1220 60%);}    
-    main{width:min(920px, 92vw); margin:0 auto; padding:18vh 0 24vh 0;}
-    section{background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01)); border:1px solid rgba(255,255,255,.06); border-radius:20px; padding:28px; margin:48px 0; box-shadow:0 12px 30px var(--shadow);}
+    main{width:min(920px, 92vw); margin:0 auto; padding:18vh 0 24vh 0; position:relative;}
+    section{background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01)); border:1px solid rgba(255,255,255,.06); border-radius:20px; padding:28px; margin:48px 0; box-shadow:0 12px 30px var(--shadow);}    
     h1,h2{margin:0 0 12px 0; line-height:1.2}
     h1{font-size:clamp(28px, 3.5vw, 46px)}
     h2{font-size:clamp(22px, 2.4vw, 30px); color:var(--accent)}
@@ -26,7 +26,6 @@
       box-shadow:0 10px 24px rgba(0,0,0,.45), inset 0 2px 6px rgba(255,255,255,.5);
       outline:2px solid rgba(255,255,255,.35);
     }
-    /* A little face */
     #player::before,#player::after{content:""; position:absolute; top:14px; width:6px; height:6px; background:#0b1220; border-radius:50%}
     #player::before{left:12px} #player::after{right:12px}
     #shadow{position:fixed; left:50%; top:calc(50% + 28px); width:60px; height:14px; transform:translateX(-50%); background:radial-gradient(ellipse at center, rgba(0,0,0,.45), rgba(0,0,0,0) 60%); filter:blur(3px); z-index:10}
@@ -45,10 +44,11 @@
     /* Section highlight when near center */
     section.in-view{outline:2px solid rgba(255,255,255,.25); box-shadow:0 18px 40px rgba(0,0,0,.6)}
 
-    /* Reduced motion */
-    @media (prefers-reduced-motion: reduce){
-      html{scroll-behavior:auto}
-    }
+    /* Platform layer (world-attached) */
+    #platLayer{position:absolute; inset:0; z-index:12; pointer-events:none}
+    .plat{position:absolute; height:14px; border-radius:7px; background:linear-gradient(180deg, rgba(255,255,255,.24), rgba(255,255,255,.1)); border:1px solid rgba(255,255,255,.15); box-shadow:0 6px 14px rgba(0,0,0,.35)}
+
+    @media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto} }
   </style>
 </head>
 <body>
@@ -62,6 +62,8 @@
   <div id="progress" aria-hidden="true"><span></span></div>
 
   <main id="article">
+    <div id="platLayer" aria-hidden="true"></div>
+
     <header style="text-align:center; margin-bottom:36px">
       <h1>Scroll‑Player Article</h1>
       <p style="color:var(--muted); max-width:62ch; margin:8px auto 0">Jump to read! The player stays centered, and the world scrolls beneath you. Great for playful docs, devlogs, or story chapters.</p>
@@ -82,33 +84,69 @@
       const progressEl = document.querySelector('#progress>span');
       const sections = Array.from(document.querySelectorAll('section'));
       const reducedBtn = document.getElementById('toggleReduced');
+      const platLayer = document.getElementById('platLayer');
+      const mainEl = document.getElementById('article');
+      const playerEl = document.getElementById('player');
+      const shadowEl = document.getElementById('shadow');
 
       let reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-      // World / camera
+      // ===== Platforms (declare BEFORE any call sites to avoid TDZ errors) =====
+      /** @type {Array<{xFrac:number,y:number,wFrac:number,h:number,el:HTMLElement,left:number,right:number,top:number,bottom:number}>} */
+      const platforms = [];
+      function clearPlatforms(){ platforms.length = 0; platLayer.innerHTML = ''; }
+      function addPlatform(xFrac, yWorld, wFrac, h){
+        const el = document.createElement('div'); el.className='plat';
+        platLayer.appendChild(el);
+        platforms.push({xFrac, y:yWorld, wFrac, h, el, left:0, right:0, top:yWorld, bottom:yWorld+h});
+      }
+      function layoutPlatforms(){
+        const mainTop = mainEl.getBoundingClientRect().top + window.scrollY;
+        platforms.forEach(p=>{
+          const wpx = Math.max(40, p.wFrac * innerWidth);
+          const lpx = p.xFrac * innerWidth - wpx/2;
+          p.left = lpx; p.right = lpx + wpx; p.top = p.y; p.bottom = p.y + p.h;
+          p.el.style.width = wpx+'px';
+          p.el.style.height = p.h+'px';
+          p.el.style.left = lpx+'px';
+          p.el.style.top = (p.y - mainTop)+'px';
+        });
+      }
+      function buildPlatforms(){
+        clearPlatforms();
+        // One platform per section + a right-side "ladder" track
+        sections.forEach((s,i)=>{
+          const r = s.getBoundingClientRect();
+          const top = r.top + window.scrollY;
+          const y = top + Math.min(120, r.height*0.35);
+          const xFrac = (i % 2 ? 0.72 : 0.28);
+          addPlatform(xFrac, y, 0.22, 14);
+        });
+        // Right-side climb path
+        const start = (mainEl.getBoundingClientRect().top + window.scrollY) + 300;
+        for(let j=0;j<8;j++) addPlatform(0.84, start + j*380, 0.16, 12);
+        layoutPlatforms();
+      }
+
+      // ===== World / camera =====
       let docH = 0, camY = 0, targetCamY = 0;
-      const recalc = () => {
-        // Using body.scrollHeight is more robust than documentElement when borders exist
+      function recalc(){
         docH = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
-        camY = window.scrollY | 0; // current scroll
-      };
-      recalc();
+        camY = window.scrollY | 0;
+        // Build or relayout platforms safely
+        if(platforms.length === 0) buildPlatforms(); else layoutPlatforms();
+      }
       addEventListener('resize', recalc);
       addEventListener('load', recalc);
+      recalc(); // safe now — platforms already declared
 
-      // Player state in world coordinates (y increases downward like the DOM)
-      const player = { x: 0.5, // 0..1 across the viewport
-                       y: window.innerHeight * 0.5, // world y
-                       vx: 0,
-                       vy: 0,
-                       width: 44,
-                       height: 44 };
+      // Player state in world coordinates
+      const player = { x: 0.5, y: innerHeight * 0.5, vx: 0, vy: 0, width: 44, height: 44 };
 
       // Physics constants
       const G = 2400;              // px/s^2
       const JUMP = 900;            // initial jump velocity (upwards => negative vy)
       const MOVE = 520;            // horizontal speed px/s
-      const AIR_DRAG = 0.015;      // fractional drag per frame
       const CAM_SMOOTH = 0.12;     // camera follow smoothing
       const MAX_FALL = 1600;       // clamp
 
@@ -124,7 +162,6 @@
         reducedMotion = !reducedMotion;
         reducedBtn.textContent = reducedMotion ? 'Enable motion' : 'Reduce motion';
         if(reducedMotion){
-          // Snap camera to native scroll and bail out
           cancelAnimationFrame(loopHandle);
           document.body.style.overflowY = 'auto';
           progressTick();
@@ -135,15 +172,10 @@
         }
       });
 
-      // Allow native scroll when reduced motion
-      if(reducedMotion){
-        document.body.style.overflowY = 'auto';
-      }else{
-        document.body.style.overflowY = 'hidden';
-      }
+      document.body.style.overflowY = reducedMotion ? 'auto' : 'hidden';
 
       // Intersection highlight near center
-      const highlightInView = ()=>{
+      function highlightInView(){
         const center = window.scrollY + innerHeight/2;
         sections.forEach(s=>{
           const r = s.getBoundingClientRect();
@@ -152,20 +184,21 @@
           const near = Math.abs(mid - center) < innerHeight*0.25;
           s.classList.toggle('in-view', near);
         });
-      };
+      }
 
       // Progress bar
-      const progressTick = ()=>{
+      function progressTick(){
         const maxScroll = Math.max(1, (docH - innerHeight));
         const pct = Math.min(1, Math.max(0, window.scrollY / maxScroll));
         progressEl.style.height = (pct*100).toFixed(1)+'%';
         highlightInView();
-      };
+      }
       addEventListener('scroll', progressTick, {passive:true});
 
-      // Game loop
+      // ===== Game loop =====
       let last = performance.now();
       let loopHandle = 0;
+      let grounded = false; let jumpPrev = false; let currentGround = null;
 
       function loop(now){
         const dt = Math.min(0.033, (now - last) / 1000);
@@ -175,58 +208,98 @@
           // Horizontal
           const left = keys.has('ArrowLeft') || keys.has('a') || keys.has('A');
           const right = keys.has('ArrowRight') || keys.has('d') || keys.has('D');
+          const jump = keys.has(' ') || keys.has('ArrowUp') || keys.has('w') || keys.has('W');
+          const dive = keys.has('ArrowDown') || keys.has('s') || keys.has('S');
+
           let dvx = 0; if(left) dvx -= MOVE; if(right) dvx += MOVE;
-          player.vx = dvx; // instantaneous for snappy feel
-          player.x += player.vx * dt / innerWidth; // normalize to viewport width
+          player.vx = dvx;
+
+          // If grounded but we walk off the platform edges, start falling
+          const px = player.x * innerWidth;
+          if(grounded && currentGround){
+            if(px < currentGround.left || px > currentGround.right){ grounded = false; currentGround = null; }
+          }
+
+          // Jump (on press edge only)
+          if(jump && !jumpPrev && grounded){ player.vy = -JUMP; grounded = false; }
+          jumpPrev = jump;
+
+          // Apply gravity only when not grounded
+          const prevY = player.y;
+          if(!grounded){
+            if(dive) player.vy += G * 0.8 * dt;
+            player.vy += G * dt; if(player.vy > MAX_FALL) player.vy = MAX_FALL;
+            player.y += player.vy * dt;
+          } else {
+            player.vy = 0; // locked to ground
+          }
+
+          // Move horizontally (normalized to viewport width)
+          player.x += player.vx * dt / innerWidth;
           player.x = Math.max(0.06, Math.min(0.94, player.x));
-          document.getElementById('player').style.left = (player.x*100)+'%';
+          playerEl.style.left = (player.x*100)+'%';
+          // Keep the shadow under the player horizontally
+          shadowEl.style.left = (player.x*100)+'%';
 
-          // Vertical
-          // Gravity pulls down (positive vy). Jump gives upward impulse.
-          const onTopBound = player.y <= innerHeight*0.5 + 1; // world ceiling
-          const onBottomBound = player.y >= Math.max(innerHeight*0.5, docH - innerHeight*0.5) - 1; // world floor
-
-          // Jump
-          if((keys.has(' ') || keys.has('ArrowUp') || keys.has('w') || keys.has('W')) && !onTopBound){
-            // only apply on key press edges? For simplicity, apply small impulse when key is down and moving downward
-            if(player.vy > -JUMP*0.6) player.vy = -JUMP; // strong single jump
-          }
-          // Dive
-          if(keys.has('ArrowDown') || keys.has('s') || keys.has('S')){
-            player.vy += G * 0.8 * dt;
-          }
-
-          // Integrate
-          player.vy += G * dt; // gravity
-          if(player.vy > MAX_FALL) player.vy = MAX_FALL;
-          player.y += player.vy * dt;
-
-          // Clamp to world
+          // World bounds
           const minY = innerHeight*0.5;
           const maxY = Math.max(minY, docH - innerHeight*0.5);
           if(player.y < minY){ player.y = minY; if(player.vy < 0) player.vy *= -0.25; }
-          if(player.y > maxY){ player.y = maxY; if(player.vy > 0) player.vy = 0; }
+          if(player.y > maxY){ player.y = maxY; grounded = true; currentGround = {left:-1e9,right:1e9, top:maxY + player.height/2, bottom:maxY + 1e9}; player.vy = 0; }
+
+          // Platform collision (landing only)
+          if(!grounded && player.vy >= 0){
+            const prevBottom = prevY + player.height/2;
+            const nextBottom = player.y + player.height/2;
+            const xpx = player.x * innerWidth;
+            for(const p of platforms){
+              if(xpx >= p.left && xpx <= p.right){
+                // crossed the top this frame
+                if(prevBottom <= p.top && nextBottom >= p.top){
+                  grounded = true; currentGround = p; player.y = p.top - player.height/2; player.vy = 0; break;
+                }
+              }
+            }
+          }
 
           // Camera follow (smooth)
-          targetCamY = Math.max(0, Math.min(docH - innerHeight, player.y - innerHeight*0.5));
+          const target = Math.max(0, Math.min(docH - innerHeight, player.y - innerHeight*0.5));
+          targetCamY = target;
           camY += (targetCamY - camY) * CAM_SMOOTH;
           window.scrollTo(0, camY|0);
 
-          // Fake squash/stretch via shadow size
+          // Shadow squash
           const vyNorm = Math.max(-JUMP, Math.min(MAX_FALL, player.vy)) / MAX_FALL;
-          const shadow = document.getElementById('shadow');
           const w = 60 + 20 * Math.max(0, vyNorm);
-          shadow.style.width = w.toFixed(0)+'px';
+          shadowEl.style.width = w.toFixed(0)+'px';
+          // Subtle opacity: fainter when airborne
+          shadowEl.style.opacity = grounded ? '0.9' : '0.6';
         }
 
         progressTick();
         loopHandle = requestAnimationFrame(loop);
       }
 
+      // ===== Self-tests (simple console checks) =====
+      (function selfTests(){
+        console.groupCollapsed('%cSelf‑tests','color:#62d0ff');
+        console.assert(Array.isArray(platforms), 'platforms should be an array');
+        // Build once to ensure platforms exist before checks
+        if(platforms.length===0) buildPlatforms();
+        const finiteBounds = platforms.every(p => [p.left,p.right,p.top,p.bottom].every(Number.isFinite));
+        console.assert(platforms.length>0, 'platforms should be populated');
+        // Shadow should horizontally track the player
+        shadowEl.style.left = (player.x*100)+'%';
+        console.assert(shadowEl.style.left.endsWith('%'), 'shadow left should be in % units');
+        console.assert(finiteBounds, 'platform bounds should be finite numbers');
+        console.groupEnd();
+      })();
+
       // Start
       reducedBtn.textContent = reducedMotion ? 'Enable motion' : 'Reduce motion';
-      camY = window.scrollY | 0; player.y = innerHeight*0.5; // start at top
+      camY = window.scrollY | 0; player.y = innerHeight*0.5;
       last = performance.now();
+      if(platforms.length===0) buildPlatforms();
       loopHandle = requestAnimationFrame(loop);
     })();
   </script>
