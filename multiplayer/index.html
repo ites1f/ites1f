@@ -1,0 +1,85 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Supabase Multiplayer Dots</title>
+  <style>
+    html,body{height:100%;margin:0;background:#0e1117;color:#fff;font-family:sans-serif}
+    canvas{display:block;margin:0 auto;background:#0b1522;border-radius:12px}
+  </style>
+</head>
+<body>
+<canvas id="c" width="900" height="600"></canvas>
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const SUPABASE_URL = "https://jlbpbizelvnrzadyztfz.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_xlpo6PyjQ3-4RgT0cHhOBQ_1KCyPD0h"  // ← the anon public key you copied earlier
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Random player identity
+const uid = crypto.randomUUID();
+const name = "guest" + Math.floor(Math.random()*9999);
+const color = `hsl(${Math.floor(Math.random()*360)},90%,65%)`;
+
+const cvs = document.getElementById("c"), ctx = cvs.getContext("2d");
+const me = { id:uid, name, color, x:450, y:300 };
+const others = new Map();
+const keys = new Set();
+
+// Movement keys
+addEventListener("keydown", e => { if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","w","a","s","d"].includes(e.key)) keys.add(e.key.toLowerCase()); });
+addEventListener("keyup", e => keys.delete(e.key.toLowerCase()));
+
+// Insert myself into DB
+async function join() {
+  await supabase.from("players").insert(me);
+  // Subscribe to changes
+  supabase.channel("room")
+    .on("postgres_changes", { event:"*", schema:"public", table:"players" }, payload => {
+      const p = payload.new || payload.old;
+      if (p.id === uid) return;
+      if (payload.eventType === "DELETE") others.delete(p.id);
+      else others.set(p.id, p);
+    })
+    .subscribe();
+  // Load existing
+  let { data } = await supabase.from("players").select("*");
+  data.forEach(p => { if(p.id!==uid) others.set(p.id,p); });
+}
+join();
+
+// Update loop
+let last = performance.now(), tick=0;
+function loop(t){
+  const dt=Math.min(0.05,(t-last)/1000); last=t;
+  const speed=240;
+  const up=keys.has("arrowup")||keys.has("w");
+  const dn=keys.has("arrowdown")||keys.has("s");
+  const lf=keys.has("arrowleft")||keys.has("a");
+  const rt=keys.has("arrowright")||keys.has("d");
+  me.x=Math.max(0,Math.min(cvs.width, me.x+(rt-lf)*speed*dt));
+  me.y=Math.max(0,Math.min(cvs.height, me.y+(dn-up)*speed*dt));
+
+  tick+=dt; if(tick>0.1){ tick=0; supabase.from("players").update({x:me.x,y:me.y,updated_at:new Date().toISOString()}).eq("id",uid); }
+
+  ctx.clearRect(0,0,cvs.width,cvs.height);
+  for(const p of others.values()) draw(p.x,p.y,p.color,p.name);
+  draw(me.x,me.y,me.color,me.name,true);
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+function draw(x,y,color,name,isMe=false){
+  ctx.beginPath(); ctx.arc(x,y,8,0,Math.PI*2); ctx.fillStyle=color; ctx.fill();
+  ctx.fillStyle="#fff"; ctx.font="12px sans-serif"; ctx.textAlign="center"; ctx.fillText(name,x,y-14);
+  if(isMe){ ctx.strokeStyle="rgba(255,255,255,.7)"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(x,y,12,0,Math.PI*2); ctx.stroke(); }
+}
+
+// Cleanup on unload
+window.addEventListener("beforeunload", ()=> supabase.from("players").delete().eq("id",uid));
+</script>
+</body>
+</html>
