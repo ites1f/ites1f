@@ -5,81 +5,129 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Supabase Multiplayer Dots</title>
   <style>
-    html,body{height:100%;margin:0;background:#0e1117;color:#fff;font-family:sans-serif}
-    canvas{display:block;margin:0 auto;background:#0b1522;border-radius:12px}
+    html,body{height:100%;margin:0;background:#0e1117;color:#e5e7eb;font-family:system-ui}
+    .wrap{height:100%;display:flex;align-items:center;justify-content:center;padding:12px}
+    canvas{background:#0b1522;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+    .hud{position:fixed;left:12px;bottom:12px;font-size:14px;opacity:.85}
+    .chip{display:inline-block;padding:4px 8px;border-radius:999px;background:#172033;margin-right:6px}
   </style>
 </head>
 <body>
-<canvas id="c" width="900" height="600"></canvas>
-<script type="module">
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+  <div class="wrap"><canvas id="c" width="900" height="600"></canvas></div>
+  <div class="hud">
+    <span class="chip">Players online: <span id="cnt">1</span></span>
+    <span class="chip">You: <span id="me">?</span></span>
+  </div>
 
-const SUPABASE_URL = "https://jlbpbizelvnrzadyztfz.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsYnBiaXplbHZucnphZHl6dGZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MzgzMjEsImV4cCI6MjA3NDAxNDMyMX0.DgsIreHYbd6ynUIFlAk8U-j2i0W3qkT9hm41toFFBxI"  // ← the anon public key you copied earlier
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  <script type="module">
+    import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// Random player identity
-const uid = crypto.randomUUID();
-const name = "guest" + Math.floor(Math.random()*9999);
-const color = `hsl(${Math.floor(Math.random()*360)},90%,65%)`;
+    // 🔧 replace these with your values
+    const SUPABASE_URL = "https://jlbpbizelvnrzadyztfz.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsYnBiaXplbHZucnphZHl6dGZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MzgzMjEsImV4cCI6MjA3NDAxNDMyMX0.DgsIreHYbd6ynUIFlAk8U-j2i0W3qkT9hm41toFFBxI";
 
-const cvs = document.getElementById("c"), ctx = cvs.getContext("2d");
-const me = { id:uid, name, color, x:450, y:300 };
-const others = new Map();
-const keys = new Set();
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// Movement keys
-addEventListener("keydown", e => { if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","w","a","s","d"].includes(e.key)) keys.add(e.key.toLowerCase()); });
-addEventListener("keyup", e => keys.delete(e.key.toLowerCase()));
+    // identity
+    const uid = crypto.randomUUID();
+    const name = "guest" + Math.floor(Math.random()*9999);
+    const color = `hsl(${Math.floor(Math.random()*360)},90%,65%)`;
+    document.getElementById("me").textContent = name;
 
-// Insert myself into DB
-async function join() {
-  await supabase.from("players").insert(me);
-  // Subscribe to changes
-  supabase.channel("room")
-    .on("postgres_changes", { event:"*", schema:"public", table:"players" }, payload => {
-      const p = payload.new || payload.old;
-      if (p.id === uid) return;
-      if (payload.eventType === "DELETE") others.delete(p.id);
-      else others.set(p.id, p);
-    })
-    .subscribe();
-  // Load existing
-  let { data } = await supabase.from("players").select("*");
-  data.forEach(p => { if(p.id!==uid) others.set(p.id,p); });
-}
-join();
+    // canvas
+    const cvs = document.getElementById("c");
+    const ctx = cvs.getContext("2d");
 
-// Update loop
-let last = performance.now(), tick=0;
-function loop(t){
-  const dt=Math.min(0.05,(t-last)/1000); last=t;
-  const speed=240;
-  const up=keys.has("arrowup")||keys.has("w");
-  const dn=keys.has("arrowdown")||keys.has("s");
-  const lf=keys.has("arrowleft")||keys.has("a");
-  const rt=keys.has("arrowright")||keys.has("d");
-  me.x=Math.max(0,Math.min(cvs.width, me.x+(rt-lf)*speed*dt));
-  me.y=Math.max(0,Math.min(cvs.height, me.y+(dn-up)*speed*dt));
+    // state
+    const me = { id: uid, name, color, x: 450, y: 300 };
+    const others = new Map();
+    const keys = new Set();
 
-  tick+=dt; if(tick>0.1){ tick=0; supabase.from("players").update({x:me.x,y:me.y,updated_at:new Date().toISOString()}).eq("id",uid); }
+    addEventListener("keydown", e => {
+      if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","w","a","s","d"].includes(e.key)) {
+        keys.add(e.key.toLowerCase()); e.preventDefault();
+      }
+    });
+    addEventListener("keyup", e => keys.delete(e.key.toLowerCase()));
 
-  ctx.clearRect(0,0,cvs.width,cvs.height);
-  for(const p of others.values()) draw(p.x,p.y,p.color,p.name);
-  draw(me.x,me.y,me.color,me.name,true);
+    // join (insert or reuse)
+    async function join() {
+      const { error: upErr } = await supabase.from("players").upsert(me, { onConflict: "id" });
+      if (upErr) console.error("upsert error:", upErr);
 
-  requestAnimationFrame(loop);
-}
-requestAnimationFrame(loop);
+      const { data, error: selErr } = await supabase.from("players").select("*");
+      if (!selErr && data) data.forEach(p => { if (p.id !== uid) others.set(p.id, p); });
+      document.getElementById("cnt").textContent = others.size + 1;
 
-function draw(x,y,color,name,isMe=false){
-  ctx.beginPath(); ctx.arc(x,y,8,0,Math.PI*2); ctx.fillStyle=color; ctx.fill();
-  ctx.fillStyle="#fff"; ctx.font="12px sans-serif"; ctx.textAlign="center"; ctx.fillText(name,x,y-14);
-  if(isMe){ ctx.strokeStyle="rgba(255,255,255,.7)"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(x,y,12,0,Math.PI*2); ctx.stroke(); }
-}
+      // realtime subscribe
+      supabase
+        .channel("room")
+        .on("postgres_changes",
+          { event: "*", schema: "public", table: "players" },
+          (payload) => {
+            const row = payload.new ?? payload.old;
+            if (!row || row.id === uid) return;
+            if (payload.eventType === "DELETE") others.delete(row.id);
+            else others.set(row.id, row);
+            document.getElementById("cnt").textContent = others.size + 1;
+          }
+        )
+        .subscribe((status) => console.log("realtime status:", status));
+    }
+    join();
 
-// Cleanup on unload
-window.addEventListener("beforeunload", ()=> supabase.from("players").delete().eq("id",uid));
-</script>
+    // main loop
+    let last = performance.now(), tick = 0;
+    function loop(t){
+      const dt = Math.min(0.05, (t - last) / 1000); last = t;
+
+      const up = keys.has("arrowup")||keys.has("w");
+      const dn = keys.has("arrowdown")||keys.has("s");
+      const lf = keys.has("arrowleft")||keys.has("a");
+      const rt = keys.has("arrowright")||keys.has("d");
+      const speed = 240;
+
+      me.x = Math.max(0, Math.min(cvs.width,  me.x + (rt-lf)*speed*dt));
+      me.y = Math.max(0, Math.min(cvs.height, me.y + (dn-up)*speed*dt));
+
+      tick += dt;
+      if (tick > 0.1) {
+        tick = 0;
+        supabase.from("players")
+          .update({ x: Math.round(me.x), y: Math.round(me.y), updated_at: new Date().toISOString() })
+          .eq("id", uid)
+          .then(({ error }) => { if (error) console.error("update error:", error); });
+      }
+
+      // draw
+      ctx.clearRect(0,0,cvs.width,cvs.height);
+      for (const p of others.values()) draw(p.x, p.y, p.color || "#fcd34d", p.name || "player");
+      draw(me.x, me.y, me.color, me.name, true);
+
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+
+    function draw(x,y,color,name,isMe=false){
+      ctx.beginPath(); ctx.arc(x,y,8,0,Math.PI*2); ctx.fillStyle=color; ctx.fill();
+      ctx.fillStyle="rgba(255,255,255,.9)"; ctx.font="12px system-ui"; ctx.textAlign="center"; ctx.fillText(name, x, y-14);
+      if (isMe){ ctx.strokeStyle="rgba(255,255,255,.6)"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(x,y,12,0,Math.PI*2); ctx.stroke(); }
+    }
+
+    // cleanup
+    addEventListener("beforeunload", () => {
+      supabase.from("players").delete().eq("id", uid);
+    });
+
+    // fallback polling every 1s (helps while you’re still enabling Realtime)
+    setInterval(async () => {
+      const { data } = await supabase.from("players").select("*");
+      if (data) {
+        others.clear();
+        data.forEach(p => { if (p.id !== uid) others.set(p.id,p); });
+        document.getElementById("cnt").textContent = others.size + 1;
+      }
+    }, 1000);
+  </script>
 </body>
 </html>
