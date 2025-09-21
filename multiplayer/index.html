@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Supabase Multiplayer Dots</title>
+  <title>Supabase Realtime — Multiplayer Dots (No DB)</title>
   <style>
     html,body{height:100%;margin:0;background:#0e1117;color:#e5e7eb;font-family:system-ui}
     .wrap{height:100%;display:flex;align-items:center;justify-content:center;padding:12px}
@@ -22,87 +22,89 @@
   <script type="module">
     import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-    // 🔧 replace these with your values
+    // 🔧 Replace with your project values
     const SUPABASE_URL = "https://jlbpbizelvnrzadyztfz.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsYnBiaXplbHZucnphZHl6dGZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MzgzMjEsImV4cCI6MjA3NDAxNDMyMX0.DgsIreHYbd6ynUIFlAk8U-j2i0W3qkT9hm41toFFBxI";
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    // identity
-    const uid = crypto.randomUUID();
-    const name = "guest" + Math.floor(Math.random()*9999);
+    // Identity
+    const uid   = crypto.randomUUID();
+    const name  = "guest" + Math.floor(Math.random()*9999);
     const color = `hsl(${Math.floor(Math.random()*360)},90%,65%)`;
     document.getElementById("me").textContent = name;
 
-    // canvas
+    // Canvas
     const cvs = document.getElementById("c");
     const ctx = cvs.getContext("2d");
 
-    // state
-    const me = { id: uid, name, color, x: 450, y: 300 };
-    const others = new Map();
-    const keys = new Set();
+    // Local state
+    const me = { id: uid, name, color, x: 450, y: 300, vx:0, vy:0 };
+    const others = new Map(); // id -> {id,name,color,x,y,ts}
 
+    // Realtime channel (broadcast + presence)
+    const room = supabase.channel("dots-room", {
+      config: {
+        broadcast: { self: false },   // don’t echo my own broadcasts
+        presence:  { key: uid }       // identify me in presence
+      }
+    });
+
+    // Presence: who’s online
+    room.on("presence", { event: "sync" }, () => {
+      const state = room.presenceState(); // { [key]: [{user…}] }
+      // Build online list from presence keys
+      const onlineIds = Object.keys(state);
+      document.getElementById("cnt").textContent = onlineIds.length;
+    });
+
+    // Presence: join with my user fields
+    room.subscribe((status) => {
+      console.log("channel status:", status);
+      if (status === "SUBSCRIBED") {
+        room.track({ id: uid, name, color });
+      }
+    });
+
+    // Receive other players' position updates
+    room.on("broadcast", { event: "state" }, (payload) => {
+      const p = payload.payload;           // {id,name,color,x,y,ts}
+      if (!p || p.id === uid) return;
+      others.set(p.id, p);
+    });
+
+    // Controls
+    const keys = new Set();
     addEventListener("keydown", e => {
-      if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","w","a","s","d"].includes(e.key)) {
+      if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","w","a","s","d"].includes(e.key)) {
         keys.add(e.key.toLowerCase()); e.preventDefault();
       }
     });
     addEventListener("keyup", e => keys.delete(e.key.toLowerCase()));
 
-    // join (insert or reuse)
-    async function join() {
-      const { error: upErr } = await supabase.from("players").upsert(me, { onConflict: "id" });
-      if (upErr) console.error("upsert error:", upErr);
-
-      const { data, error: selErr } = await supabase.from("players").select("*");
-      if (!selErr && data) data.forEach(p => { if (p.id !== uid) others.set(p.id, p); });
-      document.getElementById("cnt").textContent = others.size + 1;
-
-      // realtime subscribe
-      supabase
-        .channel("room")
-        .on("postgres_changes",
-          { event: "*", schema: "public", table: "players" },
-          (payload) => {
-            const row = payload.new ?? payload.old;
-            if (!row || row.id === uid) return;
-            if (payload.eventType === "DELETE") others.delete(row.id);
-            else others.set(row.id, row);
-            document.getElementById("cnt").textContent = others.size + 1;
-          }
-        )
-        .subscribe((status) => console.log("realtime status:", status));
-    }
-    join();
-
-    // main loop
-    let last = performance.now(), tick = 0;
+    // Game loop + broadcast ~10/sec
+    let last = performance.now(), acc = 0;
     function loop(t){
       const dt = Math.min(0.05, (t - last) / 1000); last = t;
-
       const up = keys.has("arrowup")||keys.has("w");
       const dn = keys.has("arrowdown")||keys.has("s");
       const lf = keys.has("arrowleft")||keys.has("a");
       const rt = keys.has("arrowright")||keys.has("d");
       const speed = 240;
 
-      me.x = Math.max(0, Math.min(cvs.width,  me.x + (rt-lf)*speed*dt));
-      me.y = Math.max(0, Math.min(cvs.height, me.y + (dn-up)*speed*dt));
+      me.x = Math.max(0, Math.min(cvs.width,  me.x + (rt - lf)*speed*dt));
+      me.y = Math.max(0, Math.min(cvs.height, me.y + (dn - up)*speed*dt));
 
-      tick += dt;
-      if (tick > 0.1) {
-        tick = 0;
-        supabase.from("players")
-          .update({ x: Math.round(me.x), y: Math.round(me.y), updated_at: new Date().toISOString() })
-          .eq("id", uid)
-          .then(({ error }) => { if (error) console.error("update error:", error); });
+      acc += dt;
+      if (acc > 0.1) {
+        acc = 0;
+        room.send({ type: "broadcast", event: "state", payload: { id: uid, name, color, x: Math.round(me.x), y: Math.round(me.y), ts: Date.now() }});
       }
 
       // draw
       ctx.clearRect(0,0,cvs.width,cvs.height);
       for (const p of others.values()) draw(p.x, p.y, p.color || "#fcd34d", p.name || "player");
-      draw(me.x, me.y, me.color, me.name, true);
+      draw(me.x, me.y, color, name, true);
 
       requestAnimationFrame(loop);
     }
@@ -110,24 +112,10 @@
 
     function draw(x,y,color,name,isMe=false){
       ctx.beginPath(); ctx.arc(x,y,8,0,Math.PI*2); ctx.fillStyle=color; ctx.fill();
-      ctx.fillStyle="rgba(255,255,255,.9)"; ctx.font="12px system-ui"; ctx.textAlign="center"; ctx.fillText(name, x, y-14);
+      ctx.fillStyle="rgba(255,255,255,.9)"; ctx.font="12px system-ui"; ctx.textAlign="center";
+      ctx.fillText(name, x, y - 14);
       if (isMe){ ctx.strokeStyle="rgba(255,255,255,.6)"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(x,y,12,0,Math.PI*2); ctx.stroke(); }
     }
-
-    // cleanup
-    addEventListener("beforeunload", () => {
-      supabase.from("players").delete().eq("id", uid);
-    });
-
-    // fallback polling every 1s (helps while you’re still enabling Realtime)
-    setInterval(async () => {
-      const { data } = await supabase.from("players").select("*");
-      if (data) {
-        others.clear();
-        data.forEach(p => { if (p.id !== uid) others.set(p.id,p); });
-        document.getElementById("cnt").textContent = others.size + 1;
-      }
-    }, 1000);
   </script>
 </body>
 </html>
