@@ -19,6 +19,7 @@
       box-shadow:0 4px 14px rgba(0,0,0,.4);
       display:flex; flex-direction:column; overflow:hidden;
       border:1px solid rgba(255,255,255,.06);
+      z-index:20;
     }
     #messages{
       flex:1; max-height:220px; overflow-y:auto; padding:8px 8px 4px 8px; font-size:14px;
@@ -30,6 +31,36 @@
       border:none; padding:10px 12px; background:#172033; color:#e5e7eb;
     }
     #chatInput:focus{ outline:none; }
+
+    /* === mobile joystick === */
+    .joystick{
+      position: fixed;
+      left: 12px; bottom: 12px;
+      width: 128px; height: 128px;
+      touch-action: none;
+      z-index: 30;
+    }
+    .joy-base{
+      position:absolute; inset:0;
+      border-radius: 50%;
+      background: radial-gradient(60% 60% at 50% 50%, rgba(255,255,255,.06), rgba(255,255,255,.02));
+      border: 1px solid rgba(255,255,255,.08);
+      box-shadow: inset 0 6px 18px rgba(0,0,0,.35);
+    }
+    .joy-thumb{
+      position:absolute; left:50%; top:50%;
+      width: 56px; height: 56px; margin:-28px 0 0 -28px;
+      border-radius: 50%;
+      background: #172033;
+      border: 2px solid rgba(255,255,255,.15);
+      box-shadow: 0 8px 20px rgba(0,0,0,.45);
+      transform: translate(0,0);
+      transition: transform .08s ease-out;
+      touch-action: none;
+    }
+    @media (max-width: 640px){
+      .chatbox{ right: 12px; bottom: 152px; }
+    }
   </style>
 </head>
 <body>
@@ -41,6 +72,12 @@
     <input id="chatInput" placeholder="Type message & hit Enter..." autocomplete="off">
   </div>
 
+  <!-- Joystick -->
+  <div class="joystick" id="joy">
+    <div class="joy-base"></div>
+    <div class="joy-thumb" id="thumb"></div>
+  </div>
+
   <div class="hud">
     <span class="chip">Players online: <span id="cnt">1</span></span>
     <span class="chip">You: <span id="me">?</span></span>
@@ -49,11 +86,8 @@
   <script type="module">
     import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-    // 🔧 Replace with your project values
-    // NOTE: I fixed the project ref to the one we confirmed earlier (…ztlw).
-    // If your real ref is different, change SUPABASE_URL back to your value.
     const SUPABASE_URL = "https://jlbpbizelvnrzadyztfz.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsYnBiaXplbHZucnphZHl6dGZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MzgzMjEsImV4cCI6MjA3NDAxNDMyMX0.DgsIreHYbd6ynUIFlAk8U-j2i0W3qkT9hm41toFFBxI";
+    const SUPABASE_ANON_KEY = "YOUR-ANON-KEY-HERE";
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -67,124 +101,119 @@
     const cvs = document.getElementById("c");
     const ctx = cvs.getContext("2d");
 
-    // Local state
     const me = { id: uid, name, color, x: 450, y: 300 };
-    const others = new Map(); // id -> {id,name,color,x,y,ts}
+    const others = new Map();
 
-    // Realtime channel (broadcast + presence)
+    // Realtime channel
     const room = supabase.channel("dots-room", {
-      config: {
-        broadcast: { self: false },   // don’t echo my own broadcasts
-        presence:  { key: uid }       // identify me in presence
-      }
+      config: { broadcast: { self: false }, presence: { key: uid } }
     });
 
-    // Presence: who’s online
     room.on("presence", { event: "sync" }, () => {
-      const state = room.presenceState(); // { [id]: [{id,name,color}] }
-      const onlineIds = Object.keys(state);
-      document.getElementById("cnt").textContent = onlineIds.length;
-
-      // Late-join fix: rebroadcast my current state so newcomers see me
+      const state = room.presenceState();
+      document.getElementById("cnt").textContent = Object.keys(state).length;
       sendState();
     });
 
-    // Subscribe & announce myself
     room.subscribe((status) => {
-      console.log("channel status:", status);
       if (status === "SUBSCRIBED") {
         room.track({ id: uid, name, color });
-        // Also broadcast initial state so existing players see me immediately
         sendState();
         addSysMsg("Joined the room.");
       }
     });
 
-    // Receive other players' position updates
     room.on("broadcast", { event: "state" }, (payload) => {
-      const p = payload.payload;           // {id,name,color,x,y,ts}
+      const p = payload.payload;
       if (!p || p.id === uid) return;
       others.set(p.id, p);
     });
-    // === Chat (dedup + local echo) ===
-    const shownMsgIds = new Set(); // avoid double renders if self-broadcast echoes
-    
+
+    // === Chat ===
+    const shownMsgIds = new Set();
     room.on("broadcast", { event: "chat" }, (payload) => {
-      const m = payload.payload; // { mid, id, name, text, ts }
+      const m = payload.payload;
       if (!m || !m.mid || shownMsgIds.has(m.mid)) return;
       shownMsgIds.add(m.mid);
-    
       const color = m.id === uid ? "#60a5fa" : "#e5e7eb";
       addChatMsg(m.name, m.text, color);
     });
-    
+
     const chatInput = document.getElementById("chatInput");
     chatInput.addEventListener("keydown", (e) => {
       if (e.key !== "Enter") return;
-    
       const text = chatInput.value.trim();
       if (!text) return;
-    
-      // Generate a message id for dedup (works across tabs)
       const mid = (crypto?.randomUUID?.() || Math.random().toString(36).slice(2)) + "-" + Date.now();
-    
       const msg = { mid, id: uid, name, text, ts: Date.now() };
-    
-      // Local echo immediately (blue)
       if (!shownMsgIds.has(mid)) {
         shownMsgIds.add(mid);
         addChatMsg(name, text, "#60a5fa");
       }
-    
-      // Broadcast to everyone (including me; dedup prevents double)
       room.send({ type: "broadcast", event: "chat", payload: msg });
-    
       chatInput.value = "";
-      e.preventDefault(); // prevent accidental form submits / beeps
+      e.preventDefault();
     });
-    
-    function addChatMsg(sender, text, color = "#e5e7eb") {
+
+    function addChatMsg(sender, text, color="#e5e7eb"){
       const box = document.getElementById("messages");
       const div = document.createElement("div");
       div.className = "msg";
       div.innerHTML = `<span class="name" style="color:${color}">${escapeHtml(sender)}:</span> ${escapeHtml(text)}`;
-      box.appendChild(div);
-      div.scrollIntoView({ block: "end" });
+      box.appendChild(div); div.scrollIntoView({ block:"end" });
     }
-    
-    function addSysMsg(text) {
+    function addSysMsg(text){
       const box = document.getElementById("messages");
       const div = document.createElement("div");
-      div.className = "sys";
-      div.textContent = text;
-      box.appendChild(div);
-      div.scrollIntoView({ block: "end" });
+      div.className = "sys"; div.textContent = text;
+      box.appendChild(div); div.scrollIntoView({ block:"end" });
     }
-    
-    function escapeHtml(s) {
-      return s.replace(/[&<>"']/g, c => ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;"
-      }[c]));
+    function escapeHtml(s){
+      return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
-    
-    // Controls
-    const keys = new Set();
-  addEventListener("keydown", e => {
-    if (document.activeElement === chatInput) return; // skip if typing in chat
-    if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","w","a","s","d"].includes(e.key)) {
-      keys.add(e.key.toLowerCase()); e.preventDefault();
-    }
-  });
-  addEventListener("keyup", e => {
-    if (document.activeElement === chatInput) return; // skip if typing in chat
-    keys.delete(e.key.toLowerCase());
-  });
 
-    // Game loop + broadcast ~10/sec
+    // Keyboard Controls
+    const keys = new Set();
+    addEventListener("keydown", e => {
+      if (document.activeElement === chatInput) return;
+      if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","w","a","s","d"].includes(e.key)) {
+        keys.add(e.key.toLowerCase()); e.preventDefault();
+      }
+    });
+    addEventListener("keyup", e => {
+      if (document.activeElement === chatInput) return;
+      keys.delete(e.key.toLowerCase());
+    });
+
+    // === Mobile joystick logic ===
+    const joy = document.getElementById("joy");
+    const thumb = document.getElementById("thumb");
+    const mobile = { dx: 0, dy: 0, active: false };
+
+    function getPoint(e){
+      const rect = joy.getBoundingClientRect();
+      const p = (e.touches && e.touches[0]) || e;
+      let x = p.clientX - (rect.left + rect.width/2);
+      let y = p.clientY - (rect.top  + rect.height/2);
+      const max = 44;
+      const len = Math.hypot(x,y) || 1;
+      if (len > max){ x = x/len*max; y = y/len*max; }
+      return { x, y, max };
+    }
+    function setThumb(pt){ thumb.style.transform = `translate(${pt.x}px,${pt.y}px)`; }
+    function updateMobile(pt){ mobile.dx = +(pt.x/pt.max).toFixed(3); mobile.dy = +(pt.y/pt.max).toFixed(3); }
+    function joyStart(e){ e.preventDefault(); mobile.active=true; const pt=getPoint(e); setThumb(pt); updateMobile(pt); }
+    function joyMove(e){ if(!mobile.active) return; e.preventDefault(); const pt=getPoint(e); setThumb(pt); updateMobile(pt); }
+    function joyEnd(){ mobile.active=false; mobile.dx=0; mobile.dy=0; setThumb({x:0,y:0}); }
+
+    joy.addEventListener("touchstart", joyStart, { passive:false });
+    joy.addEventListener("touchmove",  joyMove,  { passive:false });
+    joy.addEventListener("touchend",   joyEnd,   { passive:false });
+    joy.addEventListener("mousedown",  joyStart);
+    window.addEventListener("mousemove", joyMove);
+    window.addEventListener("mouseup",   joyEnd);
+
+    // Game loop
     let last = performance.now(), acc = 0;
     function loop(t){
       const dt = Math.min(0.05, (t - last) / 1000); last = t;
@@ -194,13 +223,19 @@
       const rt = keys.has("arrowright")||keys.has("d");
       const speed = 240;
 
-      me.x = Math.max(0, Math.min(cvs.width,  me.x + (rt - lf)*speed*dt));
-      me.y = Math.max(0, Math.min(cvs.height, me.y + (dn - up)*speed*dt));
+      let kx = (rt?1:0) - (lf?1:0);
+      let ky = (dn?1:0) - (up?1:0);
 
-      acc += dt;
-      if (acc > 0.1) { acc = 0; sendState(); }
+      let ax = kx + mobile.dx;
+      let ay = ky + mobile.dy;
+      const mag = Math.hypot(ax, ay);
+      if (mag > 1){ ax /= mag; ay /= mag; }
 
-      // draw
+      me.x = Math.max(0, Math.min(cvs.width,  me.x + ax*speed*dt));
+      me.y = Math.max(0, Math.min(cvs.height, me.y + ay*speed*dt));
+
+      acc += dt; if (acc > 0.1){ acc=0; sendState(); }
+
       ctx.clearRect(0,0,cvs.width,cvs.height);
       for (const p of others.values()) draw(p.x, p.y, p.color || "#fcd34d", p.name || "player");
       draw(me.x, me.y, color, name, true);
@@ -210,11 +245,7 @@
     requestAnimationFrame(loop);
 
     function sendState(){
-      room.send({
-        type: "broadcast",
-        event: "state",
-        payload: { id: uid, name, color, x: Math.round(me.x), y: Math.round(me.y), ts: Date.now() }
-      });
+      room.send({ type: "broadcast", event: "state", payload: { id: uid, name, color, x: Math.round(me.x), y: Math.round(me.y), ts: Date.now() }});
     }
 
     function draw(x,y,color,name,isMe=false){
