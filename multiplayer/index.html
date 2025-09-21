@@ -111,8 +111,12 @@
     room.on("broadcast", { event: "chat" }, (payload) => {
       const m = payload.payload; // {id, name, text, ts}
       if (!m) return;
-      addChatMsg(m.name, m.text, m.id === uid ? "#60a5fa" : "#e5e7eb");
+
+      // Always show the message, even if it's mine
+      const color = m.id === uid ? "#60a5fa" : "#e5e7eb";
+      addChatMsg(m.name, m.text, color);
     });
+
 
     const chatInput = document.getElementById("chatInput");
     chatInput.addEventListener("keydown", (e) => {
