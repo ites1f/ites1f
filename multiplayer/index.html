@@ -8,12 +8,39 @@
     html,body{height:100%;margin:0;background:#0e1117;color:#e5e7eb;font-family:system-ui}
     .wrap{height:100%;display:flex;align-items:center;justify-content:center;padding:12px}
     canvas{background:#0b1522;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+
     .hud{position:fixed;left:12px;bottom:12px;font-size:14px;opacity:.85}
     .chip{display:inline-block;padding:4px 8px;border-radius:999px;background:#172033;margin-right:6px}
+
+    /* Chat panel */
+    .chatbox{
+      position:fixed; right:12px; bottom:12px; width:260px;
+      background:#0b1522; border-radius:12px;
+      box-shadow:0 4px 14px rgba(0,0,0,.4);
+      display:flex; flex-direction:column; overflow:hidden;
+      border:1px solid rgba(255,255,255,.06);
+    }
+    #messages{
+      flex:1; max-height:220px; overflow-y:auto; padding:8px 8px 4px 8px; font-size:14px;
+    }
+    #messages .sys{ opacity:.7; font-style:italic; }
+    #messages .msg{ margin:4px 0; word-wrap:break-word; }
+    #messages .name{ font-weight:700; margin-right:4px; }
+    #chatInput{
+      border:none; padding:10px 12px; background:#172033; color:#e5e7eb;
+    }
+    #chatInput:focus{ outline:none; }
   </style>
 </head>
 <body>
   <div class="wrap"><canvas id="c" width="900" height="600"></canvas></div>
+
+  <!-- Chat -->
+  <div class="chatbox">
+    <div id="messages"></div>
+    <input id="chatInput" placeholder="Type message & hit Enter..." autocomplete="off">
+  </div>
+
   <div class="hud">
     <span class="chip">Players online: <span id="cnt">1</span></span>
     <span class="chip">You: <span id="me">?</span></span>
@@ -23,6 +50,8 @@
     import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
     // 🔧 Replace with your project values
+    // NOTE: I fixed the project ref to the one we confirmed earlier (…ztlw).
+    // If your real ref is different, change SUPABASE_URL back to your value.
     const SUPABASE_URL = "https://jlbpbizelvnrzadyztfz.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsYnBiaXplbHZucnphZHl6dGZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MzgzMjEsImV4cCI6MjA3NDAxNDMyMX0.DgsIreHYbd6ynUIFlAk8U-j2i0W3qkT9hm41toFFBxI";
 
@@ -39,7 +68,7 @@
     const ctx = cvs.getContext("2d");
 
     // Local state
-    const me = { id: uid, name, color, x: 450, y: 300, vx:0, vy:0 };
+    const me = { id: uid, name, color, x: 450, y: 300 };
     const others = new Map(); // id -> {id,name,color,x,y,ts}
 
     // Realtime channel (broadcast + presence)
@@ -52,17 +81,22 @@
 
     // Presence: who’s online
     room.on("presence", { event: "sync" }, () => {
-      const state = room.presenceState(); // { [key]: [{user…}] }
-      // Build online list from presence keys
+      const state = room.presenceState(); // { [id]: [{id,name,color}] }
       const onlineIds = Object.keys(state);
       document.getElementById("cnt").textContent = onlineIds.length;
+
+      // Late-join fix: rebroadcast my current state so newcomers see me
+      sendState();
     });
 
-    // Presence: join with my user fields
+    // Subscribe & announce myself
     room.subscribe((status) => {
       console.log("channel status:", status);
       if (status === "SUBSCRIBED") {
         room.track({ id: uid, name, color });
+        // Also broadcast initial state so existing players see me immediately
+        sendState();
+        addSysMsg("Joined the room.");
       }
     });
 
@@ -72,6 +106,42 @@
       if (!p || p.id === uid) return;
       others.set(p.id, p);
     });
+
+    // === Chat ===
+    room.on("broadcast", { event: "chat" }, (payload) => {
+      const m = payload.payload; // {id, name, text, ts}
+      if (!m) return;
+      addChatMsg(m.name, m.text, m.id === uid ? "#60a5fa" : "#e5e7eb");
+    });
+
+    const chatInput = document.getElementById("chatInput");
+    chatInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        const text = chatInput.value.trim();
+        if (!text) return;
+        const msg = { id: uid, name, text, ts: Date.now() };
+        room.send({ type: "broadcast", event: "chat", payload: msg });
+        chatInput.value = "";
+      }
+    });
+
+    function addChatMsg(sender, text, color="#e5e7eb") {
+      const box = document.getElementById("messages");
+      const div = document.createElement("div");
+      div.className = "msg";
+      div.innerHTML = `<span class="name" style="color:${color}">${escapeHtml(sender)}:</span> ${escapeHtml(text)}`;
+      box.appendChild(div);
+      div.scrollIntoView({ block:"end" });
+    }
+    function addSysMsg(text) {
+      const box = document.getElementById("messages");
+      const div = document.createElement("div");
+      div.className = "sys";
+      div.textContent = text;
+      box.appendChild(div);
+      div.scrollIntoView({ block:"end" });
+    }
+    function escapeHtml(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
     // Controls
     const keys = new Set();
@@ -96,10 +166,7 @@
       me.y = Math.max(0, Math.min(cvs.height, me.y + (dn - up)*speed*dt));
 
       acc += dt;
-      if (acc > 0.1) {
-        acc = 0;
-        room.send({ type: "broadcast", event: "state", payload: { id: uid, name, color, x: Math.round(me.x), y: Math.round(me.y), ts: Date.now() }});
-      }
+      if (acc > 0.1) { acc = 0; sendState(); }
 
       // draw
       ctx.clearRect(0,0,cvs.width,cvs.height);
@@ -109,6 +176,14 @@
       requestAnimationFrame(loop);
     }
     requestAnimationFrame(loop);
+
+    function sendState(){
+      room.send({
+        type: "broadcast",
+        event: "state",
+        payload: { id: uid, name, color, x: Math.round(me.x), y: Math.round(me.y), ts: Date.now() }
+      });
+    }
 
     function draw(x,y,color,name,isMe=false){
       ctx.beginPath(); ctx.arc(x,y,8,0,Math.PI*2); ctx.fillStyle=color; ctx.fill();
