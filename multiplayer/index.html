@@ -145,12 +145,16 @@
 
     // Controls
     const keys = new Set();
-    addEventListener("keydown", e => {
-      if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","w","a","s","d"].includes(e.key)) {
-        keys.add(e.key.toLowerCase()); e.preventDefault();
-      }
-    });
-    addEventListener("keyup", e => keys.delete(e.key.toLowerCase()));
+  addEventListener("keydown", e => {
+    if (document.activeElement === chatInput) return; // skip if typing in chat
+    if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","w","a","s","d"].includes(e.key)) {
+      keys.add(e.key.toLowerCase()); e.preventDefault();
+    }
+  });
+  addEventListener("keyup", e => {
+    if (document.activeElement === chatInput) return; // skip if typing in chat
+    keys.delete(e.key.toLowerCase());
+  });
 
     // Game loop + broadcast ~10/sec
     let last = performance.now(), acc = 0;
