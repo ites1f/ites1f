@@ -106,47 +106,71 @@
       if (!p || p.id === uid) return;
       others.set(p.id, p);
     });
-
-    // === Chat ===
+    // === Chat (dedup + local echo) ===
+    const shownMsgIds = new Set(); // avoid double renders if self-broadcast echoes
+    
     room.on("broadcast", { event: "chat" }, (payload) => {
-      const m = payload.payload; // {id, name, text, ts}
-      if (!m) return;
-
-      // Always show the message, even if it's mine
+      const m = payload.payload; // { mid, id, name, text, ts }
+      if (!m || !m.mid || shownMsgIds.has(m.mid)) return;
+      shownMsgIds.add(m.mid);
+    
       const color = m.id === uid ? "#60a5fa" : "#e5e7eb";
       addChatMsg(m.name, m.text, color);
     });
-
-
+    
     const chatInput = document.getElementById("chatInput");
     chatInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        const text = chatInput.value.trim();
-        if (!text) return;
-        const msg = { id: uid, name, text, ts: Date.now() };
-        room.send({ type: "broadcast", event: "chat", payload: msg });
-        chatInput.value = "";
+      if (e.key !== "Enter") return;
+    
+      const text = chatInput.value.trim();
+      if (!text) return;
+    
+      // Generate a message id for dedup (works across tabs)
+      const mid = (crypto?.randomUUID?.() || Math.random().toString(36).slice(2)) + "-" + Date.now();
+    
+      const msg = { mid, id: uid, name, text, ts: Date.now() };
+    
+      // Local echo immediately (blue)
+      if (!shownMsgIds.has(mid)) {
+        shownMsgIds.add(mid);
+        addChatMsg(name, text, "#60a5fa");
       }
+    
+      // Broadcast to everyone (including me; dedup prevents double)
+      room.send({ type: "broadcast", event: "chat", payload: msg });
+    
+      chatInput.value = "";
+      e.preventDefault(); // prevent accidental form submits / beeps
     });
-
-    function addChatMsg(sender, text, color="#e5e7eb") {
+    
+    function addChatMsg(sender, text, color = "#e5e7eb") {
       const box = document.getElementById("messages");
       const div = document.createElement("div");
       div.className = "msg";
       div.innerHTML = `<span class="name" style="color:${color}">${escapeHtml(sender)}:</span> ${escapeHtml(text)}`;
       box.appendChild(div);
-      div.scrollIntoView({ block:"end" });
+      div.scrollIntoView({ block: "end" });
     }
+    
     function addSysMsg(text) {
       const box = document.getElementById("messages");
       const div = document.createElement("div");
       div.className = "sys";
       div.textContent = text;
       box.appendChild(div);
-      div.scrollIntoView({ block:"end" });
+      div.scrollIntoView({ block: "end" });
     }
-    function escapeHtml(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-
+    
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, c => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      }[c]));
+    }
+    
     // Controls
     const keys = new Set();
   addEventListener("keydown", e => {
