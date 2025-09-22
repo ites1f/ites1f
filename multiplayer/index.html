@@ -245,7 +245,7 @@
     }
   });
   addEventListener("keyup", e => {
-    if (document.activeElement === chatInput) return;
+    if (document.activeElement === chatInput || document.activeElement === nameInput) return;
     keys.delete(e.key.toLowerCase());
   });
 
