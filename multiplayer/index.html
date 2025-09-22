@@ -130,7 +130,7 @@
   const nameBtn = document.getElementById("nameBtn");
   nameInput.value = name;
   
-  nameBtn.addEventListener("click", () => {
+  function applyName() {
     const newName = nameInput.value.trim();
     if (!newName) return;
     name = newName;
@@ -138,7 +138,15 @@
     addSysMsg("You are now known as " + name);
     // broadcast update immediately
     sendState();
+  }
+  
+  nameBtn.addEventListener("click", applyName);
+  nameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      applyName();
+    }
   });
+  
   
   const color = `hsl(${Math.floor(Math.random()*360)},90%,65%)`;
   document.getElementById("me").textContent = name;
