@@ -247,7 +247,7 @@
   // Keyboard Controls
   const keys = new Set();
   addEventListener("keydown", e => {
-    if (document.activeElement === chatInput) return;
+    if (document.activeElement === chatInput || document.activeElement === nameInput) return;
     if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","w","a","s","d"].includes(e.key)) {
       keys.add(e.key.toLowerCase()); e.preventDefault();
     }
