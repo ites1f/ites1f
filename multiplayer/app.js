@@ -2,7 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 /* ===================== Config ===================== */
 const SUPABASE_URL = "https://jlbpbizelvnrzadyztfz.supabase.co";
-const SUPABASE_ANON_KEY = "REPLACE_WITH_YOUR_ANON_KEY"; // <- use your real anon key
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsYnBiaXplbHZucnphZHl6dGZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MzgzMjEsImV4cCI6MjA3NDAxNDMyMX0.DgsIreHYbd6ynUIFlAk8U-j2i0W3qkT9hm41toFFBxI"; // <- use your real anon key
 
 // Colors
 const MY_COLOR     = "#60a5fa";  // you = blue
