@@ -114,7 +114,25 @@
 
   // Identity
   const uid   = crypto.randomUUID();
-  const name  = "guest" + Math.floor(Math.random()*9999);
+  
+  let name = "guest" + Math.floor(Math.random()*9999);
+  document.getElementById("me").textContent = name;
+  
+  // Allow changing name before/after joining
+  const nameInput = document.getElementById("nameInput");
+  const nameBtn = document.getElementById("nameBtn");
+  nameInput.value = name;
+  
+  nameBtn.addEventListener("click", () => {
+    const newName = nameInput.value.trim();
+    if (!newName) return;
+    name = newName;
+    document.getElementById("me").textContent = name;
+    addSysMsg("You are now known as " + name);
+    // broadcast update immediately
+    sendState();
+  });
+  
   const color = `hsl(${Math.floor(Math.random()*360)},90%,65%)`;
   document.getElementById("me").textContent = name;
 
