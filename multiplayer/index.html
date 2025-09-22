@@ -94,6 +94,15 @@
       <input type="range" id="smoothRange" min="0" max="30" step="1" value="12">
     </div>
   </div>
+  
+  <div id="nameBox" style="position:fixed;top:20px;left:50%;transform:translateX(-50%);
+    background:#0b1522;padding:10px 14px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.4);z-index:50;">
+    <label style="font-size:14px;margin-right:6px;">Name:</label>
+    <input id="nameInput" maxlength="16" placeholder="Enter your name"
+      style="padding:4px 6px;border:none;border-radius:4px;background:#172033;color:#e5e7eb;">
+    <button id="nameBtn" style="margin-left:6px;padding:4px 10px;background:#1e293b;
+      color:#e5e7eb;border:none;border-radius:4px;cursor:pointer;">Set</button>
+  </div>
 
   <script type="module">
   import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
