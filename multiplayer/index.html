@@ -113,7 +113,7 @@
   const cvs = document.getElementById("c");
   const ctx = cvs.getContext("2d");
 
-  const me = { id: uid, name, color, x: 450, y: 300 };
+  const me = { id: uid, name, color, x: cvs.width/2, y: cvs.height/2 };
   const others = new Map();
 
   // Realtime channel
