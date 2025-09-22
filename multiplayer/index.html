@@ -3,13 +3,16 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Subspace Realtime — MP</title>
+  <title>Supabase Realtime — Multiplayer with Glide Control</title>
   <style>
     html,body{height:100%;margin:0;background:#0e1117;color:#e5e7eb;font-family:system-ui}
     .wrap{height:100%;display:flex;align-items:center;justify-content:center;padding:12px}
     canvas{background:#0b1522;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
 
-    .hud{position:fixed;left:12px;bottom:12px;font-size:14px;opacity:.85}
+    .hud{
+      position:fixed;left:12px;bottom:12px;font-size:14px;opacity:.85;
+      display:flex;flex-direction:column;gap:6px;z-index:40;
+    }
     .chip{display:inline-block;padding:4px 8px;border-radius:999px;background:#172033;margin-right:6px}
 
     /* Chat panel */
@@ -35,7 +38,7 @@
     /* === mobile joystick === */
     .joystick{
       position: fixed;
-      left: 120px; bottom: 120px;
+      left: 12px; bottom: 12px;
       width: 128px; height: 128px;
       touch-action: none;
       z-index: 30;
@@ -61,6 +64,9 @@
     @media (max-width: 640px){
       .chatbox{ right: 12px; bottom: 152px; }
     }
+
+    .sliderBox{background:#172033;padding:6px 8px;border-radius:8px;}
+    .sliderBox label{display:block;font-size:12px;margin-bottom:2px;}
   </style>
 </head>
 <body>
@@ -79,181 +85,216 @@
   </div>
 
   <div class="hud">
-    <span class="chip">Players online: <span id="cnt">1</span></span>
-    <span class="chip">You: <span id="me">?</span></span>
+    <div>
+      <span class="chip">Players: <span id="cnt">1</span></span>
+      <span class="chip">You: <span id="me">?</span></span>
+    </div>
+    <div class="sliderBox">
+      <label for="smoothRange">Glide factor: <span id="smoothVal">12</span></label>
+      <input type="range" id="smoothRange" min="0" max="30" step="1" value="12">
+    </div>
   </div>
 
   <script type="module">
-    import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+  import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-    const SUPABASE_URL = "https://jlbpbizelvnrzadyztfz.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsYnBiaXplbHZucnphZHl6dGZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MzgzMjEsImV4cCI6MjA3NDAxNDMyMX0.DgsIreHYbd6ynUIFlAk8U-j2i0W3qkT9hm41toFFBxI";
+  const SUPABASE_URL = "https://jlbpbizelvnrzadyztfz.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsYnBiaXplbHZucnphZHl6dGZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MzgzMjEsImV4cCI6MjA3NDAxNDMyMX0.DgsIreHYbd6ynUIFlAk8U-j2i0W3qkT9hm41toFFBxI"; // 👈 replace with your real anon key
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    // Identity
-    const uid   = crypto.randomUUID();
-    const name  = "guest" + Math.floor(Math.random()*9999);
-    const color = `hsl(${Math.floor(Math.random()*360)},90%,65%)`;
-    document.getElementById("me").textContent = name;
+  // Identity
+  const uid   = crypto.randomUUID();
+  const name  = "guest" + Math.floor(Math.random()*9999);
+  const color = `hsl(${Math.floor(Math.random()*360)},90%,65%)`;
+  document.getElementById("me").textContent = name;
 
-    // Canvas
-    const cvs = document.getElementById("c");
-    const ctx = cvs.getContext("2d");
+  // Canvas
+  const cvs = document.getElementById("c");
+  const ctx = cvs.getContext("2d");
 
-    const me = { id: uid, name, color, x: 450, y: 300 };
-    const others = new Map();
+  const me = { id: uid, name, color, x: 450, y: 300 };
+  const others = new Map();
 
-    // Realtime channel
-    const room = supabase.channel("dots-room", {
-      config: { broadcast: { self: false }, presence: { key: uid } }
-    });
+  // Realtime channel
+  const room = supabase.channel("dots-room", {
+    config: { broadcast: { self: true }, presence: { key: uid } }
+  });
 
-    room.on("presence", { event: "sync" }, () => {
-      const state = room.presenceState();
-      document.getElementById("cnt").textContent = Object.keys(state).length;
+  room.on("presence", { event: "sync" }, () => {
+    const state = room.presenceState();
+    document.getElementById("cnt").textContent = Object.keys(state).length;
+    sendState();
+  });
+
+  room.subscribe((status) => {
+    if (status === "SUBSCRIBED") {
+      room.track({ id: uid, name, color });
       sendState();
-    });
-
-    room.subscribe((status) => {
-      if (status === "SUBSCRIBED") {
-        room.track({ id: uid, name, color });
-        sendState();
-        addSysMsg("Joined the room.");
-      }
-    });
-
-    room.on("broadcast", { event: "state" }, (payload) => {
-      const p = payload.payload;
-      if (!p || p.id === uid) return;
-      others.set(p.id, p);
-    });
-
-    // === Chat ===
-    const shownMsgIds = new Set();
-    room.on("broadcast", { event: "chat" }, (payload) => {
-      const m = payload.payload;
-      if (!m || !m.mid || shownMsgIds.has(m.mid)) return;
-      shownMsgIds.add(m.mid);
-      const color = m.id === uid ? "#60a5fa" : "#e5e7eb";
-      addChatMsg(m.name, m.text, color);
-    });
-
-    const chatInput = document.getElementById("chatInput");
-    chatInput.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter") return;
-      const text = chatInput.value.trim();
-      if (!text) return;
-      const mid = (crypto?.randomUUID?.() || Math.random().toString(36).slice(2)) + "-" + Date.now();
-      const msg = { mid, id: uid, name, text, ts: Date.now() };
-      if (!shownMsgIds.has(mid)) {
-        shownMsgIds.add(mid);
-        addChatMsg(name, text, "#60a5fa");
-      }
-      room.send({ type: "broadcast", event: "chat", payload: msg });
-      chatInput.value = "";
-      e.preventDefault();
-    });
-
-    function addChatMsg(sender, text, color="#e5e7eb"){
-      const box = document.getElementById("messages");
-      const div = document.createElement("div");
-      div.className = "msg";
-      div.innerHTML = `<span class="name" style="color:${color}">${escapeHtml(sender)}:</span> ${escapeHtml(text)}`;
-      box.appendChild(div); div.scrollIntoView({ block:"end" });
+      addSysMsg("Joined the room.");
     }
-    function addSysMsg(text){
-      const box = document.getElementById("messages");
-      const div = document.createElement("div");
-      div.className = "sys"; div.textContent = text;
-      box.appendChild(div); div.scrollIntoView({ block:"end" });
-    }
-    function escapeHtml(s){
-      return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  });
+
+  // State updates with smoothing target
+  room.on("broadcast", { event: "state" }, (payload) => {
+    const p = payload.payload;
+    if (!p || p.id === uid) return;
+
+    const prev = others.get(p.id);
+    const nowTs = p.ts || Date.now();
+
+    if (!prev) {
+      others.set(p.id, { id:p.id, name:p.name, color:p.color||"#fcd34d", x:p.x, y:p.y, tx:p.x, ty:p.y, lastTs:nowTs });
+      return;
     }
 
-    // Keyboard Controls
-    const keys = new Set();
-    addEventListener("keydown", e => {
-      if (document.activeElement === chatInput) return;
-      if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","w","a","s","d"].includes(e.key)) {
-        keys.add(e.key.toLowerCase()); e.preventDefault();
-      }
-    });
-    addEventListener("keyup", e => {
-      if (document.activeElement === chatInput) return;
-      keys.delete(e.key.toLowerCase());
-    });
+    prev.tx = p.x;
+    prev.ty = p.y;
+    prev.name = p.name;
+    prev.color = p.color || prev.color;
+    prev.lastTs = nowTs;
 
-    // === Mobile joystick logic ===
-    const joy = document.getElementById("joy");
-    const thumb = document.getElementById("thumb");
-    const mobile = { dx: 0, dy: 0, active: false };
+    // Snap if huge jump
+    const dx = prev.tx - prev.x, dy = prev.ty - prev.y;
+    if (dx*dx + dy*dy > 200*200) { prev.x=prev.tx; prev.y=prev.ty; }
+  });
 
-    function getPoint(e){
-      const rect = joy.getBoundingClientRect();
-      const p = (e.touches && e.touches[0]) || e;
-      let x = p.clientX - (rect.left + rect.width/2);
-      let y = p.clientY - (rect.top  + rect.height/2);
-      const max = 44;
-      const len = Math.hypot(x,y) || 1;
-      if (len > max){ x = x/len*max; y = y/len*max; }
-      return { x, y, max };
+  // === Chat ===
+  const shownMsgIds = new Set();
+  room.on("broadcast", { event: "chat" }, (payload) => {
+    const m = payload.payload;
+    if (!m || !m.mid || shownMsgIds.has(m.mid)) return;
+    shownMsgIds.add(m.mid);
+    const color = m.id === uid ? "#60a5fa" : "#e5e7eb";
+    addChatMsg(m.name, m.text, color);
+  });
+
+  const chatInput = document.getElementById("chatInput");
+  chatInput.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const text = chatInput.value.trim();
+    if (!text) return;
+    const mid = (crypto?.randomUUID?.() || Math.random().toString(36).slice(2)) + "-" + Date.now();
+    const msg = { mid, id: uid, name, text, ts: Date.now() };
+    if (!shownMsgIds.has(mid)) {
+      shownMsgIds.add(mid);
+      addChatMsg(name, text, "#60a5fa");
     }
-    function setThumb(pt){ thumb.style.transform = `translate(${pt.x}px,${pt.y}px)`; }
-    function updateMobile(pt){ mobile.dx = +(pt.x/pt.max).toFixed(3); mobile.dy = +(pt.y/pt.max).toFixed(3); }
-    function joyStart(e){ e.preventDefault(); mobile.active=true; const pt=getPoint(e); setThumb(pt); updateMobile(pt); }
-    function joyMove(e){ if(!mobile.active) return; e.preventDefault(); const pt=getPoint(e); setThumb(pt); updateMobile(pt); }
-    function joyEnd(){ mobile.active=false; mobile.dx=0; mobile.dy=0; setThumb({x:0,y:0}); }
+    room.send({ type: "broadcast", event: "chat", payload: msg });
+    chatInput.value = "";
+    e.preventDefault();
+  });
 
-    joy.addEventListener("touchstart", joyStart, { passive:false });
-    joy.addEventListener("touchmove",  joyMove,  { passive:false });
-    joy.addEventListener("touchend",   joyEnd,   { passive:false });
-    joy.addEventListener("mousedown",  joyStart);
-    window.addEventListener("mousemove", joyMove);
-    window.addEventListener("mouseup",   joyEnd);
+  function addChatMsg(sender, text, color="#e5e7eb"){
+    const box = document.getElementById("messages");
+    const div = document.createElement("div");
+    div.className = "msg";
+    div.innerHTML = `<span class="name" style="color:${color}">${escapeHtml(sender)}:</span> ${escapeHtml(text)}`;
+    box.appendChild(div); div.scrollIntoView({ block:"end" });
+  }
+  function addSysMsg(text){
+    const box = document.getElementById("messages");
+    const div = document.createElement("div");
+    div.className = "sys"; div.textContent = text;
+    box.appendChild(div); div.scrollIntoView({ block:"end" });
+  }
+  function escapeHtml(s){
+    return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+  }
 
-    // Game loop
-    let last = performance.now(), acc = 0;
-    function loop(t){
-      const dt = Math.min(0.05, (t - last) / 1000); last = t;
-      const up = keys.has("arrowup")||keys.has("w");
-      const dn = keys.has("arrowdown")||keys.has("s");
-      const lf = keys.has("arrowleft")||keys.has("a");
-      const rt = keys.has("arrowright")||keys.has("d");
-      const speed = 240;
-
-      let kx = (rt?1:0) - (lf?1:0);
-      let ky = (dn?1:0) - (up?1:0);
-
-      let ax = kx + mobile.dx;
-      let ay = ky + mobile.dy;
-      const mag = Math.hypot(ax, ay);
-      if (mag > 1){ ax /= mag; ay /= mag; }
-
-      me.x = Math.max(0, Math.min(cvs.width,  me.x + ax*speed*dt));
-      me.y = Math.max(0, Math.min(cvs.height, me.y + ay*speed*dt));
-
-      acc += dt; if (acc > 0.1){ acc=0; sendState(); }
-
-      ctx.clearRect(0,0,cvs.width,cvs.height);
-      for (const p of others.values()) draw(p.x, p.y, p.color || "#fcd34d", p.name || "player");
-      draw(me.x, me.y, color, name, true);
-
-      requestAnimationFrame(loop);
+  // Keyboard Controls
+  const keys = new Set();
+  addEventListener("keydown", e => {
+    if (document.activeElement === chatInput) return;
+    if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","w","a","s","d"].includes(e.key)) {
+      keys.add(e.key.toLowerCase()); e.preventDefault();
     }
+  });
+  addEventListener("keyup", e => {
+    if (document.activeElement === chatInput) return;
+    keys.delete(e.key.toLowerCase());
+  });
+
+  // Joystick
+  const joy = document.getElementById("joy");
+  const thumb = document.getElementById("thumb");
+  const mobile = { dx: 0, dy: 0, active: false };
+  function getPoint(e){
+    const rect = joy.getBoundingClientRect();
+    const p = (e.touches && e.touches[0]) || e;
+    let x = p.clientX - (rect.left + rect.width/2);
+    let y = p.clientY - (rect.top  + rect.height/2);
+    const max = 44; const len = Math.hypot(x,y) || 1;
+    if (len > max){ x = x/len*max; y = y/len*max; }
+    return { x,y,max };
+  }
+  function setThumb(pt){ thumb.style.transform=`translate(${pt.x}px,${pt.y}px)`; }
+  function updateMobile(pt){ mobile.dx=+(pt.x/pt.max).toFixed(3); mobile.dy=+(pt.y/pt.max).toFixed(3); }
+  function joyStart(e){ e.preventDefault(); mobile.active=true; const pt=getPoint(e); setThumb(pt); updateMobile(pt); }
+  function joyMove(e){ if(!mobile.active) return; e.preventDefault(); const pt=getPoint(e); setThumb(pt); updateMobile(pt); }
+  function joyEnd(){ mobile.active=false; mobile.dx=0; mobile.dy=0; setThumb({x:0,y:0}); }
+  joy.addEventListener("touchstart", joyStart, { passive:false });
+  joy.addEventListener("touchmove", joyMove, { passive:false });
+  joy.addEventListener("touchend", joyEnd, { passive:false });
+  joy.addEventListener("mousedown", joyStart);
+  window.addEventListener("mousemove", joyMove);
+  window.addEventListener("mouseup", joyEnd);
+
+  // Smoothing factor slider
+  let SMOOTH = 12;
+  const smoothRange = document.getElementById("smoothRange");
+  const smoothVal = document.getElementById("smoothVal");
+  smoothRange.addEventListener("input", () => {
+    SMOOTH = parseInt(smoothRange.value,10);
+    smoothVal.textContent = SMOOTH;
+  });
+
+  // Game loop
+  let last = performance.now(), acc = 0;
+  function loop(t){
+    const dt = Math.min(0.05, (t - last) / 1000); last = t;
+    const up = keys.has("arrowup")||keys.has("w");
+    const dn = keys.has("arrowdown")||keys.has("s");
+    const lf = keys.has("arrowleft")||keys.has("a");
+    const rt = keys.has("arrowright")||keys.has("d");
+    const speed = 240;
+
+    let kx = (rt?1:0) - (lf?1:0);
+    let ky = (dn?1:0) - (up?1:0);
+    let ax = kx + mobile.dx, ay = ky + mobile.dy;
+    const mag = Math.hypot(ax, ay);
+    if (mag > 1){ ax/=mag; ay/=mag; }
+    me.x = Math.max(0, Math.min(cvs.width,  me.x + ax*speed*dt));
+    me.y = Math.max(0, Math.min(cvs.height, me.y + ay*speed*dt));
+
+    acc += dt; if (acc > 0.1){ acc=0; sendState(); }
+
+    // Smooth others
+    for (const o of others.values()) {
+      if (SMOOTH === 0){ o.x=o.tx; o.y=o.ty; continue; }
+      const factor = Math.min(1, SMOOTH * dt);
+      o.x += (o.tx - o.x) * factor;
+      o.y += (o.ty - o.y) * factor;
+    }
+
+    ctx.clearRect(0,0,cvs.width,cvs.height);
+    for (const o of others.values()) draw(o.x, o.y, o.color||"#fcd34d", o.name||"player");
+    draw(me.x, me.y, color, name, true);
+
     requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
 
-    function sendState(){
-      room.send({ type: "broadcast", event: "state", payload: { id: uid, name, color, x: Math.round(me.x), y: Math.round(me.y), ts: Date.now() }});
-    }
+  function sendState(){
+    room.send({ type:"broadcast", event:"state", payload:{ id:uid, name, color, x:Math.round(me.x), y:Math.round(me.y), ts:Date.now() } });
+  }
 
-    function draw(x,y,color,name,isMe=false){
-      ctx.beginPath(); ctx.arc(x,y,8,0,Math.PI*2); ctx.fillStyle=color; ctx.fill();
-      ctx.fillStyle="rgba(255,255,255,.9)"; ctx.font="12px system-ui"; ctx.textAlign="center";
-      ctx.fillText(name, x, y - 14);
-      if (isMe){ ctx.strokeStyle="rgba(255,255,255,.6)"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(x,y,12,0,Math.PI*2); ctx.stroke(); }
-    }
+  function draw(x,y,color,name,isMe=false){
+    ctx.beginPath(); ctx.arc(x,y,8,0,Math.PI*2); ctx.fillStyle=color; ctx.fill();
+    ctx.fillStyle="rgba(255,255,255,.9)"; ctx.font="12px system-ui"; ctx.textAlign="center";
+    ctx.fillText(name, x, y-14);
+    if (isMe){ ctx.strokeStyle="rgba(255,255,255,.6)"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(x,y,12,0,Math.PI*2); ctx.stroke(); }
+  }
   </script>
 </body>
 </html>
