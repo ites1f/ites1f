@@ -34,7 +34,7 @@ const MAX_COINS = 25;
 // Mobs (with anti-merge)
 const MOB_R = 10;
 const MAX_MOBS = 12;
-const MOB_SPEED = 120;      // chase speed
+const MOB_SPEED = 70;      // chase speed
 const MOB_MAX_SPEED = 140;  // clamp total speed
 const SEP_RADIUS = 36;      // separation distance to avoid merging
 const SEP_FORCE = 220;      // strength of separation force
