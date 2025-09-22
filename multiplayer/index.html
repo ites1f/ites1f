@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Web Sandbox MP</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="c" width="1200" height="600"></canvas>
+  </div>
+
+  <!-- Chat -->
+  <div class="chatbox">
+    <div id="messages"></div>
+    <input id="chatInput" placeholder="Type message & hit Enter..." autocomplete="off">
+  </div>
+
+  <!-- Joystick -->
+  <div class="joystick" id="joy">
+    <div class="joy-base"></div>
+    <div class="joy-thumb" id="thumb"></div>
+  </div>
+
+  <!-- HUD (bottom-left) -->
+  <div class="hud">
+    <div>
+      <span class="chip">Players: <span id="cnt">1</span></span>
+      <span class="chip">You: <span id="me">?</span></span>
+      <span class="chip">🪙 Coins: <span id="coinVal">0</span></span>
+    </div>
+    <div class="sliderBox">
+      <label for="smoothRange">Glide factor: <span id="smoothVal">12</span></label>
+      <input type="range" id="smoothRange" min="0" max="30" step="1" value="12">
+    </div>
+  </div>
+
+  <!-- Name box -->
+  <div id="nameBox" class="namebox">
+    <label class="namebox-label">Name:</label>
+    <input id="nameInput" maxlength="16" placeholder="Enter your name" class="namebox-input">
+    <button id="nameBtn" class="namebox-btn">Set</button>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
