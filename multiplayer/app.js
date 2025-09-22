@@ -2,7 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 /* ===================== Config ===================== */
 const SUPABASE_URL = "https://jlbpbizelvnrzadyztfz.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsYnBiaXplbHZucnphZHl6dGZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MzgzMjEsImV4cCI6MjA3NDAxNDMyMX0.DgsIreHYbd6ynUIFlAk8U-j2i0W3qkT9hm41toFFBxI"; // <- use your real anon key
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsYnBiaXplbHZucnphZHl6dGZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MzgzMjEsImV4cCI6MjA3NDAxNDMyMX0.DgsIreHYbd6ynUIFlAk8U-j2i0W3qkT9hm41toFFBxI"; // <- put your real anon key
 
 // Colors
 const MY_COLOR     = "#60a5fa";  // you = blue
@@ -11,7 +11,7 @@ const MOB_COLOR    = "#ef4444";  // mobs = red
 const COIN_COLOR   = "#ffc83d";  // coins = yellow
 
 // Movement smoothing
-let SMOOTH = 12;
+let SMOOTH = 16;
 
 // Idle cleanup
 const IDLE_MOVE_EPS = 2;     // px change to count as movement
@@ -24,6 +24,21 @@ let hp = HP_MAX;
 const CONTACT_DAMAGE = 20;
 const INVULN_MS = 700;
 let lastHitAt = -1;
+
+// Coins
+const COIN_R = 8;
+const PICKUP_RADIUS = 22;   // ← proximity pickup distance (in addition to player radius)
+const COIN_HEAL = 8;        // ← heal amount per coin
+const MAX_COINS = 25;
+
+// Mobs (with anti-merge)
+const MOB_R = 10;
+const MAX_MOBS = 12;
+const MOB_SPEED = 120;      // chase speed
+const MOB_MAX_SPEED = 140;  // clamp total speed
+const SEP_RADIUS = 36;      // separation distance to avoid merging
+const SEP_FORCE = 220;      // strength of separation force
+const MOB_BROADCAST_MS = 150; // how often host syncs mobs
 
 /* ===================== Setup ===================== */
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -47,29 +62,47 @@ smoothRange.addEventListener("input", () => {
   smoothVal.textContent = SMOOTH;
 });
 
-// Player entities
+// Entities
 const me = { id: uid, name, color: MY_COLOR, x: cvs.width/2, y: cvs.height/2 };
 const others = new Map();
+const coins = [];
+let score = 0;
+const coinHud = document.getElementById("coinVal");
 
-/* ===================== Supabase Realtime ===================== */
+// Mobs state
+let mobs = []; // objects: {x,y,vx,vy, tx?, ty?}
+let isHost = false; // who simulates & broadcasts mobs
+let lastMobsBroadcast = 0;
+let lastMobsSeq = 0;
+
+/* ===================== Realtime ===================== */
 const room = supabase.channel("dots-room", {
   config: { broadcast: { self: true }, presence: { key: uid } }
 });
 
-room.on("presence", { event: "sync" }, () => {
+// Host election: smallest presence key (uid) becomes host
+function recomputeHost() {
   const state = room.presenceState();
-  document.getElementById("cnt").textContent = Object.keys(state).length;
+  const keys = Object.keys(state).sort(); // lexicographic
+  const hostId = keys[0];
+  isHost = (hostId === uid);
+}
+
+room.on("presence", { event: "sync" }, () => {
+  document.getElementById("cnt").textContent = Object.keys(room.presenceState()).length;
+  recomputeHost();
   sendState();
 });
 
 room.subscribe((status) => {
   if (status === "SUBSCRIBED") {
-    room.track({ id: uid, name, color: MY_COLOR });
-    sendState();
+    room.track({ id: uid, name, color: MY_COLOR, joinedAt: Date.now() });
     addSysMsg("Joined the room.");
+    sendState();
   }
 });
 
+// players' positions
 room.on("broadcast", { event: "state" }, (payload) => {
   const p = payload.payload;
   if (!p || p.id === uid) return;
@@ -79,7 +112,7 @@ room.on("broadcast", { event: "state" }, (payload) => {
 
   if (!prev) {
     others.set(p.id, {
-      id: p.id, name: p.name, color: p.color || OTHER_COLOR,
+      id: p.id, name: p.name, color: OTHER_COLOR,
       x: p.x, y: p.y, tx: p.x, ty: p.y,
       lastHeardTs: nowTs, lastActiveTs: nowTs
     });
@@ -89,12 +122,39 @@ room.on("broadcast", { event: "state" }, (payload) => {
   const moved = Math.hypot((p.x - prev.tx), (p.y - prev.ty)) > IDLE_MOVE_EPS;
   prev.tx = p.x; prev.ty = p.y;
   prev.name = p.name;
-  prev.color = OTHER_COLOR; // always white for others (local render)
+  prev.color = OTHER_COLOR; // always white locally
   prev.lastHeardTs = nowTs;
   if (moved) prev.lastActiveTs = nowTs;
 });
 
-/* ===================== Chat ===================== */
+// mobs sync (from host)
+room.on("broadcast", { event: "mobs" }, (payload) => {
+  if (isHost) return; // host ignores
+  const data = payload.payload;
+  if (!data || typeof data.seq !== "number" || !Array.isArray(data.mobs)) return;
+  if (data.seq <= lastMobsSeq) return;
+  lastMobsSeq = data.seq;
+
+  // Ensure mobs array sizes match target
+  if (mobs.length < data.mobs.length) {
+    for (let i = mobs.length; i < data.mobs.length; i++) {
+      mobs.push({ x: data.mobs[i][0], y: data.mobs[i][1], vx:0, vy:0, tx:data.mobs[i][0], ty:data.mobs[i][1] });
+    }
+  } else if (mobs.length > data.mobs.length) {
+    mobs.length = data.mobs.length;
+  }
+
+  // Update targets; we’ll lerp towards them to avoid snapping
+  for (let i = 0; i < data.mobs.length; i++) {
+    const [nx, ny] = data.mobs[i];
+    const m = mobs[i];
+    if (!m) continue;
+    m.tx = nx; m.ty = ny;
+    if (m.x === undefined) { m.x = nx; m.y = ny; }
+  }
+});
+
+// chat
 const shownMsgIds = new Set();
 room.on("broadcast", { event: "chat" }, (payload) => {
   const m = payload.payload;
@@ -103,6 +163,7 @@ room.on("broadcast", { event: "chat" }, (payload) => {
   addChatMsg(m.name, m.text, m.id === uid ? "#60a5fa" : "#e5e7eb");
 });
 
+/* ===================== Chat UI ===================== */
 const chatInput = document.getElementById("chatInput");
 chatInput.addEventListener("keydown", (e) => {
   if (e.key !== "Enter") return;
@@ -162,7 +223,7 @@ addEventListener("keyup", e => {
   keys.delete(e.key.toLowerCase());
 });
 
-// Joystick (mobile + desktop drag)
+// Joystick
 const joy = document.getElementById("joy");
 const thumb = document.getElementById("thumb");
 const mobile = { dx: 0, dy: 0, active: false };
@@ -188,21 +249,12 @@ window.addEventListener("mousemove", joyMove);
 window.addEventListener("mouseup", joyEnd);
 
 /* ===================== Coins ===================== */
-const coins = [];
-let score = 0;
-const coinHud = document.getElementById("coinVal");
-const COIN_R = 8;
 function spawnCoin(){
   coins.push({ x: Math.random()*cvs.width, y: Math.random()*cvs.height, born: performance.now() });
 }
-setInterval(()=>{ if (coins.length < 25) spawnCoin(); }, 1500);
+setInterval(()=>{ if (coins.length < MAX_COINS) spawnCoin(); }, 1500);
 
 /* ===================== Mobs ===================== */
-const mobs = [];
-const MOB_R = 10;
-const MAX_MOBS = 12;
-const MOB_SPEED = 120;
-let lastMobSpawn = 0;
 function spawnMob(){
   const side = Math.floor(Math.random()*4);
   let x=0,y=0;
@@ -210,35 +262,74 @@ function spawnMob(){
   if (side === 1) { x = cvs.width+20; y = Math.random()*cvs.height; }
   if (side === 2) { x = Math.random()*cvs.width; y = cvs.height+20; }
   if (side === 3) { x = -20; y = Math.random()*cvs.height; }
-  mobs.push({ x, y });
+  mobs.push({ x, y, vx: 0, vy: 0 });
 }
-function updateMobs(dt, now){
-  if (now - lastMobSpawn > 1200 && mobs.length < MAX_MOBS) { lastMobSpawn = now; spawnMob(); }
-  for (const m of mobs) {
-    const dx = me.x - m.x, dy = me.y - m.y;
-    const len = Math.hypot(dx, dy) || 1;
-    m.x += (dx/len) * MOB_SPEED * dt;
-    m.y += (dy/len) * MOB_SPEED * dt;
+
+// Host simulates mobs + broadcasts
+function hostUpdateMobs(dt, t){
+  // Spawn
+  if (mobs.length < MAX_MOBS && Math.random() < dt * 0.8) {
+    spawnMob();
   }
-}
-function drawMobs(){
-  for (const m of mobs) {
-    ctx.beginPath(); ctx.globalAlpha = 0.22;
-    ctx.arc(m.x, m.y, MOB_R*2.1, 0, Math.PI*2); ctx.fillStyle = MOB_COLOR; ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.beginPath(); ctx.arc(m.x, m.y, MOB_R, 0, Math.PI*2); ctx.fillStyle = MOB_COLOR; ctx.fill();
-  }
-}
-function checkMobDamage(now){
-  const PR = 10;
-  for (const m of mobs) {
-    const dx = me.x - m.x, dy = me.y - m.y;
-    if (dx*dx + dy*dy <= (PR + MOB_R) * (PR + MOB_R)) {
-      if (now - lastHitAt > INVULN_MS) {
-        hp = Math.max(0, hp - CONTACT_DAMAGE);
-        lastHitAt = now;
+
+  // Integrate with chase + separation
+  for (let i = 0; i < mobs.length; i++) {
+    const m = mobs[i];
+
+    // Chase force
+    let dx = me.x - m.x, dy = me.y - m.y;
+    let len = Math.hypot(dx, dy) || 1;
+    let cx = (dx/len) * MOB_SPEED;  // desired velocity component
+    let cy = (dy/len) * MOB_SPEED;
+
+    // Separation force from neighbors
+    let sx = 0, sy = 0;
+    for (let j = 0; j < mobs.length; j++) if (j !== i) {
+      const n = mobs[j];
+      const rx = m.x - n.x, ry = m.y - n.y;
+      const d2 = rx*rx + ry*ry;
+      if (d2 > 0 && d2 < SEP_RADIUS*SEP_RADIUS) {
+        const d = Math.sqrt(d2);
+        const w = (SEP_RADIUS - d) / SEP_RADIUS; // 0..1
+        sx += (rx / (d || 1)) * (SEP_FORCE * w);
+        sy += (ry / (d || 1)) * (SEP_FORCE * w);
       }
     }
+
+    // Combine (simple Euler)
+    m.vx = cx + sx;
+    m.vy = cy + sy;
+
+    // Clamp speed
+    const sp = Math.hypot(m.vx, m.vy);
+    if (sp > MOB_MAX_SPEED) {
+      m.vx = m.vx / sp * MOB_MAX_SPEED;
+      m.vy = m.vy / sp * MOB_MAX_SPEED;
+    }
+
+    m.x += m.vx * dt;
+    m.y += m.vy * dt;
+  }
+
+  // Periodic broadcast
+  if (t - lastMobsBroadcast > MOB_BROADCAST_MS) {
+    lastMobsBroadcast = t;
+    lastMobsSeq++;
+    room.send({
+      type: "broadcast",
+      event: "mobs",
+      payload: { seq: lastMobsSeq, mobs: mobs.map(m => [Math.round(m.x), Math.round(m.y)]) }
+    });
+  }
+}
+
+// Non-host interpolates towards targets (no spawning, no AI)
+function clientFollowMobs(dt){
+  for (const m of mobs) {
+    if (m.tx === undefined) continue;
+    const factor = Math.min(1, 10 * dt); // soft follow
+    m.x = (m.x ?? m.tx) + (m.tx - (m.x ?? m.tx)) * factor;
+    m.y = (m.y ?? m.ty) + (m.ty - (m.y ?? m.ty)) * factor;
   }
 }
 
@@ -256,6 +347,15 @@ function drawHPBar(x, y, w=42, h=6){
   ctx.fillStyle = pct > 0.5 ? "#22c55e" : (pct > 0.25 ? "#f59e0b" : "#ef4444");
   ctx.fillRect(left, top, Math.max(0, w * pct), h);
   ctx.strokeStyle = "rgba(255,255,255,0.6)"; ctx.lineWidth = 1; ctx.strokeRect(left + .5, top + .5, w - 1, h - 1);
+}
+
+function drawMobs(){
+  for (const m of mobs) {
+    ctx.beginPath(); ctx.globalAlpha = 0.22;
+    ctx.arc(m.x, m.y, MOB_R*2.1, 0, Math.PI*2); ctx.fillStyle = MOB_COLOR; ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.beginPath(); ctx.arc(m.x, m.y, MOB_R, 0, Math.PI*2); ctx.fillStyle = MOB_COLOR; ctx.fill();
+  }
 }
 
 /* ===================== Game Loop ===================== */
@@ -298,17 +398,24 @@ function loop(t){
     }
   }
 
-  // Systems
-  updateMobs(dt, t);
+  // Mobs
+  if (isHost) hostUpdateMobs(dt, t);
+  else clientFollowMobs(dt);
 
   // Rendering
   ctx.clearRect(0,0,cvs.width,cvs.height);
 
-  // Coins (draw + collect)
+  // Coins (draw + proximity pickup + heal)
   for (let i=coins.length-1;i>=0;i--){
     const c = coins[i];
     const dx = me.x - c.x, dy = me.y - c.y;
-    if (dx*dx + dy*dy < (8+COIN_R)*(8+COIN_R)) { coins.splice(i,1); score++; coinHud.textContent = score; continue; }
+    const PR = 8; // player radius used for pickup math
+    if (dx*dx + dy*dy < (PR + COIN_R + PICKUP_RADIUS) * (PR + COIN_R + PICKUP_RADIUS)) {
+      coins.splice(i,1);
+      score++; coinHud.textContent = score;
+      hp = Math.min(HP_MAX, hp + COIN_HEAL); // heal on pickup
+      continue;
+    }
     // glow
     ctx.beginPath(); ctx.globalAlpha = .25; ctx.arc(c.x,c.y,COIN_R*2.2,0,Math.PI*2); ctx.fillStyle=COIN_COLOR; ctx.fill(); ctx.globalAlpha=1;
     // body
@@ -318,7 +425,7 @@ function loop(t){
     ctx.fillStyle="#fff2b3"; ctx.fill(); ctx.globalAlpha=1;
   }
 
-  // Mobs
+  // Mobs draw + damage
   drawMobs();
   checkMobDamage(t);
 
@@ -348,6 +455,19 @@ function loop(t){
 requestAnimationFrame(loop);
 
 /* ===================== Utilities ===================== */
+function checkMobDamage(now){
+  const PR = 10;
+  for (const m of mobs) {
+    const dx = me.x - m.x, dy = me.y - m.y;
+    if (dx*dx + dy*dy <= (PR + MOB_R) * (PR + MOB_R)) {
+      if (now - lastHitAt > INVULN_MS) {
+        hp = Math.max(0, hp - CONTACT_DAMAGE);
+        lastHitAt = now;
+      }
+    }
+  }
+}
+
 function sendState(){
   room.send({
     type:"broadcast", event:"state",
