@@ -25,13 +25,6 @@ const CONTACT_DAMAGE = 20;
 const INVULN_MS = 700;
 let lastHitAt = -1;
 
-// Death / Respawn
-const RESPAWN_MS = 5000;          // wait 2s on death
-const RESPAWN_INVULN_MS = 3200;   // spawn shield
-let isDead = false;
-let respawnAt = 0;
-const SPAWN_POINT = { x: cvs.width/2, y: cvs.height/2 };
-
 // Coins
 const COIN_R = 8;
 const PICKUP_RADIUS = 42;
@@ -40,7 +33,7 @@ const MAX_COINS = 25;
 
 // Mobs
 const MOB_R = 10;
-const MAX_MOBS = 120;
+let   MAX_MOBS = 120; // can be dynamic later
 const MOB_SPEED = 70;
 const MOB_MAX_SPEED = 140;
 const SEP_RADIUS = 36;
@@ -48,9 +41,9 @@ const SEP_FORCE = 220;
 const HOST_BROADCAST_MS = 150;
 const NO_FEED_MS = 2500;
 
-// 🔀 New: randomized spawning & lifetimes
-const MOB_SPAWN_MIN_MS = 400;   // fastest spawn gap
-const MOB_SPAWN_MAX_MS = 1000;  // slowest spawn gap
+// 🔀 Randomized spawning & lifetimes
+const MOB_SPAWN_MIN_MS = 400;    // fastest spawn gap
+const MOB_SPAWN_MAX_MS = 1000;   // slowest spawn gap
 const MOB_DESPAWN_MIN_MS = 20000; // shortest lifetime
 const MOB_DESPAWN_MAX_MS = 28000; // longest lifetime
 
@@ -83,6 +76,18 @@ const coins = [];
 let score = 0;
 const coinHud = document.getElementById("coinVal");
 
+// Death / Respawn (placed AFTER canvas so we can read its size)
+const RESPAWN_MS = 5000;          // wait 5s on death
+const RESPAWN_INVULN_MS = 3200;   // spawn shield
+let isDead = false;
+let respawnAt = 0;
+// lazy spawn point to avoid using cvs before it's defined
+let SPAWN_POINT = null;
+function getSpawnPoint() {
+  if (!SPAWN_POINT) SPAWN_POINT = { x: cvs.width/2, y: cvs.height/2 };
+  return SPAWN_POINT;
+}
+
 // Mobs state
 let mobs = [];
 let isHost = false;
@@ -90,7 +95,7 @@ let lastMobsBroadcast = 0;
 let lastMobsSeq = 0;
 let lastMobsHeard = 0;
 
-// 🔀 New: spawn scheduler
+// 🔀 spawn scheduler
 let nextMobSpawnAt = performance.now() + randRange(MOB_SPAWN_MIN_MS, MOB_SPAWN_MAX_MS);
 
 /* ===================== Visibility heartbeats ===================== */
@@ -114,23 +119,6 @@ const room = supabase.channel("dots-room", {
   config: { broadcast: { self: true }, presence: { key: uid } }
 });
 
-function killPlayer() {
-  if (isDead) return;
-  isDead = true;
-  respawnAt = performance.now() + RESPAWN_MS;
-  hp = 0;
-  addSysMsg(`${name} died…`);
-}
-
-function respawnPlayer() {
-  isDead = false;
-  me.x = SPAWN_POINT.x;
-  me.y = SPAWN_POINT.y;
-  hp = HP_MAX;
-  lastHitAt = performance.now();         // start invulnerable
-  addSysMsg(`${name} respawned!`);
-}
-
 function smallestVisibleId() {
   const state = room.presenceState();
   const allIds = Object.keys(state);
@@ -153,8 +141,8 @@ function recomputeHost(){
     if (isHost) {
       lastMobsSeq = 0;
       const now = performance.now();
-      for (const m of mobs) ensureMobMeta(m, now);  // 👈 backfill
-      nextMobSpawnAt = now + randRange(MOB_SPAWN_MIN_MS, MOB_SPAWN_MAX_MS); // 👈 reset schedule
+      for (const m of mobs) ensureMobMeta(m, now);  // backfill
+      nextMobSpawnAt = now + randRange(MOB_SPAWN_MIN_MS, MOB_SPAWN_MAX_MS); // reset schedule
     }
   }
 }
@@ -298,7 +286,6 @@ function spawnCoin(){coins.push({x:Math.random()*cvs.width,y:Math.random()*cvs.h
 setInterval(()=>{if(coins.length<MAX_COINS)spawnCoin();},1500);
 
 /* ===================== Host: Mobs simulation ===================== */
-// 🔀 Updated to include born/lifeMs for despawn + randomized spawn timing
 function spawnMob(){
   const side=Math.floor(Math.random()*4);let x=0,y=0;
   if(side===0){x=Math.random()*cvs.width;y=-20;}
@@ -349,7 +336,7 @@ function hostUpdateMobs(dt, t){
       }
     }
 
-    let dx = target.x - m.x, dy = target.y - m.y, len = Math.hypot(dx, dy) || 1;
+    let dx = target.x - m.x, dy = target.y - m.y, len = Math.hypot(dx,dy) || 1;
     let cx = (dx/len) * MOB_SPEED, cy = (dy/len) * MOB_SPEED;
     let sx = 0, sy = 0;
 
@@ -383,14 +370,22 @@ function hostUpdateMobs(dt, t){
 }
 
 function clientFollowMobs(dt){
-  for(const m of mobs){if(m.tx===undefined)continue;
-    const k=Math.min(1,12*dt);m.x=(m.x??m.tx)+(m.tx-(m.x??m.tx))*k;m.y=(m.y??m.ty)+(m.ty-(m.y??m.ty))*k;}
+  for(const m of mobs){ if(m.tx===undefined)continue;
+    const k=Math.min(1,12*dt);
+    m.x=(m.x??m.tx)+(m.tx-(m.x??m.tx))*k;
+    m.y=(m.y??m.ty)+(m.ty-(m.y??m.ty))*k;
+  }
 }
 
 /* ===================== Drawing ===================== */
 function drawEntity(x,y,color){ctx.beginPath();ctx.arc(x,y,8,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();}
 function drawName(x,y,name){ctx.fillStyle="rgba(255,255,255,.9)";ctx.font="12px system-ui";ctx.textAlign="center";ctx.fillText(name,x,y-14);}
-function drawRing(x,y){ctx.strokeStyle="rgba(255,255,255,.6)";ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,12,0,Math.PI*2);ctx.stroke();}
+function drawRing(x,y){
+  const invuln = performance.now() - lastHitAt < RESPAWN_INVULN_MS;
+  ctx.strokeStyle = invuln ? "rgba(96,165,250,.9)" : "rgba(255,255,255,.6)";
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(x,y,12,0,Math.PI*2); ctx.stroke();
+}
 function drawHPBar(x,y,w=42,h=6){
   const pad=16,pct=hp/HP_MAX,left=x-w/2,top=y-20-pad;
   ctx.fillStyle="rgba(0,0,0,0.45)";ctx.fillRect(left,top,w,h);
@@ -405,11 +400,29 @@ function drawMobs(){
   }
 }
 
+function killPlayer() {
+  if (isDead) return;
+  isDead = true;
+  respawnAt = performance.now() + RESPAWN_MS;
+  hp = 0;
+  addSysMsg(`${name} died…`);
+}
+
+function respawnPlayer() {
+  isDead = false;
+  const sp = getSpawnPoint();
+  me.x = sp.x;
+  me.y = sp.y;
+  hp = HP_MAX;
+  lastHitAt = performance.now(); // start invulnerable
+  addSysMsg(`${name} respawned!`);
+}
+
 /* ===================== Game Loop ===================== */
 let last=performance.now(),acc=0;
 function loop(t){
   const dt=Math.min(0.05,(t-last)/1000);last=t;
-  // (inside loop)
+
   if (!isDead) {
     const up=keys.has("arrowup")||keys.has("w"),dn=keys.has("arrowdown")||keys.has("s");
     const lf=keys.has("arrowleft")||keys.has("a"),rt=keys.has("arrowright")||keys.has("d");
@@ -438,7 +451,6 @@ function loop(t){
   // Collisions
   const nowms = performance.now();
 
-  // skip taking damage / pickups while dead
   if (!isDead) {
     for (let i=0;i<mobs.length;i++){
       const m=mobs[i]; const dx=me.x-m.x, dy=me.y-m.y;
@@ -446,22 +458,17 @@ function loop(t){
         hp -= CONTACT_DAMAGE; lastHitAt = nowms; if (hp < 0) hp = 0;
       }
     }
-  
     for (let i=coins.length-1;i>=0;i--){
       const c=coins[i]; const dx=me.x-c.x, dy=me.y-c.y;
       if (dx*dx + dy*dy < PICKUP_RADIUS*PICKUP_RADIUS) {
         coins.splice(i,1); score++; coinHud.textContent = score; hp = Math.min(HP_MAX, hp + COIN_HEAL);
       }
     }
-
     if (hp <= 0) killPlayer();
   }
 
   // Handle pending respawn
-  if (isDead && nowms >= respawnAt) {
-    respawnPlayer();
-  }
-
+  if (isDead && nowms >= respawnAt) { respawnPlayer(); }
 
   // Idle prune
   for(const [id,o] of others){
@@ -476,12 +483,26 @@ function loop(t){
   drawMobs();
   for(const o of others.values()){drawEntity(o.x,o.y,o.color);drawName(o.x,o.y,o.name);}
   drawEntity(me.x,me.y,MY_COLOR);drawName(me.x,me.y,me.name);drawRing(me.x,me.y);drawHPBar(me.x,me.y);
+
+  // Optional: simple death overlay
+  if (isDead) {
+    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    ctx.fillRect(0,0,cvs.width,cvs.height);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 28px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText("You Died", cvs.width/2, cvs.height/2 - 8);
+    const secs = Math.max(0, Math.ceil((respawnAt - performance.now())/1000));
+    ctx.font = "14px system-ui";
+    ctx.fillText(`Respawning in ${secs}s…`, cvs.width/2, cvs.height/2 + 16);
+  }
+
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 
 /* ===================== Utils ===================== */
-function sendState(){room.send({type:"broadcast",event:"state",payload:{id:uid,name,color:MY_COLOR,x:Math.round(me.x),y:Math.round(me.y),ts:Date.now()}});}
-
-// 🔀 helper
+function sendState(){
+  room.send({type:"broadcast",event:"state",payload:{id:uid,name,color:MY_COLOR,x:Math.round(me.x),y:Math.round(me.y),ts:Date.now()}});
+}
 function randRange(min, max){ return min + Math.random()*(max-min); }
