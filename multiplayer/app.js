@@ -41,6 +41,12 @@ const SEP_FORCE = 220;
 const HOST_BROADCAST_MS = 150;
 const NO_FEED_MS = 2500;
 
+// 🔀 New: randomized spawning & lifetimes
+const MOB_SPAWN_MIN_MS = 400;   // fastest spawn gap
+const MOB_SPAWN_MAX_MS = 2000;  // slowest spawn gap
+const MOB_DESPAWN_MIN_MS = 3500; // shortest lifetime
+const MOB_DESPAWN_MAX_MS = 8000; // longest lifetime
+
 /* ===================== Setup ===================== */
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const uid = crypto.randomUUID();
@@ -76,6 +82,9 @@ let isHost = false;
 let lastMobsBroadcast = 0;
 let lastMobsSeq = 0;
 let lastMobsHeard = 0;
+
+// 🔀 New: spawn scheduler
+let nextMobSpawnAt = performance.now() + randRange(MOB_SPAWN_MIN_MS, MOB_SPAWN_MAX_MS);
 
 /* ===================== Visibility heartbeats ===================== */
 let isVisible = !document.hidden;
@@ -117,7 +126,6 @@ function recomputeHost(){
   const nextIsHost = (chosen === uid);
   if (nextIsHost !== current) {
     isHost = nextIsHost;
-    //addSysMsg(isHost ? "You are now host (mobs AI)." : "Another player became host.");
     if (isHost) lastMobsSeq = 0;
   }
 }
@@ -256,17 +264,36 @@ function spawnCoin(){coins.push({x:Math.random()*cvs.width,y:Math.random()*cvs.h
 setInterval(()=>{if(coins.length<MAX_COINS)spawnCoin();},1500);
 
 /* ===================== Host: Mobs simulation ===================== */
+// 🔀 Updated to include born/lifeMs for despawn + randomized spawn timing
 function spawnMob(){
   const side=Math.floor(Math.random()*4);let x=0,y=0;
   if(side===0){x=Math.random()*cvs.width;y=-20;}
   if(side===1){x=cvs.width+20;y=Math.random()*cvs.height;}
   if(side===2){x=Math.random()*cvs.width;y=cvs.height+20;}
   if(side===3){x=-20;y=Math.random()*cvs.height;}
-  mobs.push({x,y,vx:(Math.random()-0.5)*40,vy:(Math.random()-0.5)*40});
+  mobs.push({
+    x, y,
+    vx:(Math.random()-0.5)*40,
+    vy:(Math.random()-0.5)*40,
+    born: performance.now(),
+    lifeMs: randRange(MOB_DESPAWN_MIN_MS, MOB_DESPAWN_MAX_MS)
+  });
 }
+
+// 🔀 Randomized spawn cadence + despawn of expired mobs on the host
 function hostUpdateMobs(dt,t){
-  if(!isVisible)return;
-  if(mobs.length<MAX_MOBS&&Math.random()<dt*0.8){spawnMob();}
+  if(!isVisible) return;
+
+  let dirty = false; // track changes to broadcast immediately
+
+  // Randomized spawn schedule: as long as it's time (and under cap), spawn and schedule next
+  while (t >= nextMobSpawnAt && mobs.length < MAX_MOBS) {
+    spawnMob();
+    nextMobSpawnAt += randRange(MOB_SPAWN_MIN_MS, MOB_SPAWN_MAX_MS);
+    dirty = true;
+  }
+
+  // Physics + separation
   for(let i=0;i<mobs.length;i++){
     const m=mobs[i];
     let target={x:cvs.width/2,y:cvs.height/2};
@@ -290,11 +317,21 @@ function hostUpdateMobs(dt,t){
     const sp=Math.hypot(m.vx,m.vy);if(sp>MOB_MAX_SPEED){m.vx=m.vx/sp*MOB_MAX_SPEED;m.vy=m.vy/sp*MOB_MAX_SPEED;}
     m.x+=m.vx*dt;m.y+=m.vy*dt;
   }
-  if(t-lastMobsBroadcast>HOST_BROADCAST_MS){
-    lastMobsBroadcast=t;lastMobsSeq++;
+
+  // 🔥 Despawn expired mobs
+  const now = performance.now();
+  for (let i = mobs.length - 1; i >= 0; i--) {
+    const m = mobs[i];
+    if (now - m.born >= m.lifeMs) { mobs.splice(i, 1); dirty = true; }
+  }
+
+  // Broadcast (on cadence OR immediately if list changed)
+  if (dirty || (t - lastMobsBroadcast > HOST_BROADCAST_MS)) {
+    lastMobsBroadcast=t; lastMobsSeq++;
     room.send({type:"broadcast",event:"mobs",payload:{seq:lastMobsSeq,mobs:mobs.map(m => [m.x, m.y])}});
   }
 }
+
 function clientFollowMobs(dt){
   for(const m of mobs){if(m.tx===undefined)continue;
     const k=Math.min(1,12*dt);m.x=(m.x??m.tx)+(m.tx-(m.x??m.tx))*k;m.y=(m.y??m.ty)+(m.ty-(m.y??m.ty))*k;}
@@ -377,3 +414,6 @@ requestAnimationFrame(loop);
 
 /* ===================== Utils ===================== */
 function sendState(){room.send({type:"broadcast",event:"state",payload:{id:uid,name,color:MY_COLOR,x:Math.round(me.x),y:Math.round(me.y),ts:Date.now()}});}
+
+// 🔀 helper
+function randRange(min, max){ return min + Math.random()*(max-min); }
