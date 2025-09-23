@@ -33,8 +33,8 @@ const MAX_COINS = 25;
 
 // Mobs
 const MOB_R = 10;
-const MAX_MOBS = 12;
-const MOB_SPEED = 120;
+const MAX_MOBS = 120;
+const MOB_SPEED = 70;
 const MOB_MAX_SPEED = 140;
 const SEP_RADIUS = 36;
 const SEP_FORCE = 220;
@@ -126,8 +126,18 @@ function recomputeHost(){
   const nextIsHost = (chosen === uid);
   if (nextIsHost !== current) {
     isHost = nextIsHost;
-    if (isHost) lastMobsSeq = 0;
+    if (isHost) {
+      lastMobsSeq = 0;
+      const now = performance.now();
+      for (const m of mobs) ensureMobMeta(m, now);  // 👈 backfill
+      nextMobSpawnAt = now + randRange(MOB_SPAWN_MIN_MS, MOB_SPAWN_MAX_MS); // 👈 reset schedule
+    }
   }
+}
+
+function ensureMobMeta(m, now = performance.now()) {
+  if (m.born == null) m.born = now;
+  if (m.lifeMs == null) m.lifeMs = randRange(MOB_DESPAWN_MIN_MS, MOB_DESPAWN_MAX_MS);
 }
 
 room.on("presence", { event:"sync" }, () => {
@@ -280,55 +290,71 @@ function spawnMob(){
   });
 }
 
-// 🔀 Randomized spawn cadence + despawn of expired mobs on the host
-function hostUpdateMobs(dt,t){
-  if(!isVisible) return;
+function hostUpdateMobs(dt, t){
+  if (!isVisible) return;
 
-  let dirty = false; // track changes to broadcast immediately
+  let dirty = false;
+  const now = performance.now();
 
-  // Randomized spawn schedule: as long as it's time (and under cap), spawn and schedule next
-  while (t >= nextMobSpawnAt && mobs.length < MAX_MOBS) {
+  // Randomized spawn schedule using the same clock as despawn
+  while (now >= nextMobSpawnAt && mobs.length < MAX_MOBS) {
     spawnMob();
-    nextMobSpawnAt += randRange(MOB_SPAWN_MIN_MS, MOB_SPAWN_MAX_MS);
+    nextMobSpawnAt = now + randRange(MOB_SPAWN_MIN_MS, MOB_SPAWN_MAX_MS);
     dirty = true;
   }
 
-  // Physics + separation
-  for(let i=0;i<mobs.length;i++){
-    const m=mobs[i];
-    let target={x:cvs.width/2,y:cvs.height/2};
-    const players=[{x:me.x,y:me.y}]; for(const o of others.values())players.push({x:o.tx??o.x,y:o.ty??o.y});
-    if(players.length>0){
-      if(Math.random()<0.7){
-        let best=players[0],bestD2=Infinity;
-        for(const p of players){const dx=p.x-m.x,dy=p.y-m.y,d2=dx*dx+dy*dy;if(d2<bestD2){bestD2=d2;best=p;}}
-        target=best;
-      }else{target=players[Math.floor(Math.random()*players.length)];}
+  // Physics + separation (ensure metadata first)
+  for (let i = 0; i < mobs.length; i++) {
+    const m = mobs[i];
+    ensureMobMeta(m, now);
+
+    let target = { x: cvs.width/2, y: cvs.height/2 };
+    const players = [{ x: me.x, y: me.y }];
+    for (const o of others.values()) players.push({ x: o.tx ?? o.x, y: o.ty ?? o.y });
+
+    if (players.length > 0) {
+      if (Math.random() < 0.7) {
+        let best = players[0], bestD2 = Infinity;
+        for (const p of players) {
+          const dx = p.x - m.x, dy = p.y - m.y, d2 = dx*dx + dy*dy;
+          if (d2 < bestD2) { bestD2 = d2; best = p; }
+        }
+        target = best;
+      } else {
+        target = players[Math.floor(Math.random()*players.length)];
+      }
     }
-    let dx=target.x-m.x,dy=target.y-m.y,len=Math.hypot(dx,dy)||1;
-    let cx=(dx/len)*MOB_SPEED,cy=(dy/len)*MOB_SPEED;
-    let sx=0,sy=0;
-    for(let j=0;j<mobs.length;j++)if(j!==i){
-      const n=mobs[j];const rx=m.x-n.x,ry=m.y-n.y,d2=rx*rx+ry*ry;
-      if(d2>0&&d2<SEP_RADIUS*SEP_RADIUS){const d=Math.sqrt(d2);const w=(SEP_RADIUS-d)/SEP_RADIUS;
-        sx+=(rx/(d||1))*(SEP_FORCE*w);sy+=(ry/(d||1))*(SEP_FORCE*w);}
+
+    let dx = target.x - m.x, dy = target.y - m.y, len = Math.hypot(dx, dy) || 1;
+    let cx = (dx/len) * MOB_SPEED, cy = (dy/len) * MOB_SPEED;
+    let sx = 0, sy = 0;
+
+    for (let j = 0; j < mobs.length; j++) if (j !== i) {
+      const n = mobs[j]; const rx = m.x - n.x, ry = m.y - n.y, d2 = rx*rx + ry*ry;
+      if (d2 > 0 && d2 < SEP_RADIUS*SEP_RADIUS) {
+        const d = Math.sqrt(d2); const w = (SEP_RADIUS - d) / SEP_RADIUS;
+        sx += (rx/(d||1)) * (SEP_FORCE * w);
+        sy += (ry/(d||1)) * (SEP_FORCE * w);
+      }
     }
-    m.vx=cx+sx+m.vx*0.05;m.vy=cy+sy+m.vy*0.05;
-    const sp=Math.hypot(m.vx,m.vy);if(sp>MOB_MAX_SPEED){m.vx=m.vx/sp*MOB_MAX_SPEED;m.vy=m.vy/sp*MOB_MAX_SPEED;}
-    m.x+=m.vx*dt;m.y+=m.vy*dt;
+
+    m.vx = cx + sx + m.vx * 0.05;
+    m.vy = cy + sy + m.vy * 0.05;
+    const sp = Math.hypot(m.vx, m.vy);
+    if (sp > MOB_MAX_SPEED) { m.vx = m.vx/sp*MOB_MAX_SPEED; m.vy = m.vy/sp*MOB_MAX_SPEED; }
+    m.x += m.vx * dt; m.y += m.vy * dt;
   }
 
-  // 🔥 Despawn expired mobs
-  const now = performance.now();
+  // Despawn expired mobs
   for (let i = mobs.length - 1; i >= 0; i--) {
     const m = mobs[i];
     if (now - m.born >= m.lifeMs) { mobs.splice(i, 1); dirty = true; }
   }
 
-  // Broadcast (on cadence OR immediately if list changed)
+  // Broadcast if list changed or on cadence
   if (dirty || (t - lastMobsBroadcast > HOST_BROADCAST_MS)) {
-    lastMobsBroadcast=t; lastMobsSeq++;
-    room.send({type:"broadcast",event:"mobs",payload:{seq:lastMobsSeq,mobs:mobs.map(m => [m.x, m.y])}});
+    lastMobsBroadcast = t; lastMobsSeq++;
+    room.send({ type: "broadcast", event: "mobs", payload: { seq: lastMobsSeq, mobs: mobs.map(m => [m.x, m.y]) } });
   }
 }
 
