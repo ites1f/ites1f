@@ -27,7 +27,7 @@ let lastHitAt = -1;
 
 // Coins
 const COIN_R = 8;
-const PICKUP_RADIUS = 22;
+const PICKUP_RADIUS = 42;
 const COIN_HEAL = 8;
 const MAX_COINS = 25;
 
@@ -292,7 +292,7 @@ function hostUpdateMobs(dt,t){
   }
   if(t-lastMobsBroadcast>HOST_BROADCAST_MS){
     lastMobsBroadcast=t;lastMobsSeq++;
-    room.send({type:"broadcast",event:"mobs",payload:{seq:lastMobsSeq,mobs:mobs.map(m=>[Math.round(m.x),Math.round(m.y)])}});
+    room.send({type:"broadcast",event:"mobs",payload:{seq:lastMobsSeq,mobs:mobs.map(m => [m.x, m.y])}});
   }
 }
 function clientFollowMobs(dt){
