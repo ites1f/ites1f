@@ -113,6 +113,18 @@ room.subscribe((status) => {
   }
 });
 
+// Track if this tab is visible
+let isVisible = !document.hidden;
+document.addEventListener("visibilitychange", () => {
+  isVisible = !document.hidden;
+  if (!isVisible && isHost) {
+    // If host goes hidden, immediately give up host role
+    isHost = false;
+    addSysMsg("Tab hidden → stepping down as host.");
+  }
+  recomputeHost();
+});
+
 // players' positions
 room.on("broadcast", { event: "state" }, (payload) => {
   const p = payload.payload;
@@ -298,6 +310,7 @@ function sampleTargetsForMob(m){
 }
 
 function hostUpdateMobs(dt, t){
+  if (!isVisible) return; // don't simulate while hidden
   // Spawn
   if (mobs.length < MAX_MOBS && Math.random() < dt * 0.8) {
     spawnMob();
