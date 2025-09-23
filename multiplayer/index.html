@@ -5,6 +5,18 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Web Sandbox MP</title>
   <link rel="stylesheet" href="style.css">
+  <style>
+    /* minimal styling for the admin button; tweak or move to style.css */
+    .admin-panel {
+      position: fixed; right: 12px; top: 12px; z-index: 1000;
+      display: flex; gap: 8px;
+    }
+    .admin-btn {
+      padding: 8px 10px; border: 0; border-radius: 10px; cursor: pointer;
+      font-weight: 700;
+    }
+    .admin-btn.reset { background: #ff2950; color: #fff; }
+  </style>
 </head>
 <body>
   <div class="wrap">
@@ -42,6 +54,38 @@
     <input id="nameInput" maxlength="16" placeholder="Enter your name" class="namebox-input">
     <button id="nameBtn" class="namebox-btn">Set</button>
   </div>
+
+  <!-- Admin controls -->
+  <div class="admin-panel" aria-label="admin controls">
+    <button id="resetBtn" class="admin-btn reset" title="Password required">🔴 Reset Players</button>
+  </div>
+
+  <!-- Password-protected reset logic -->
+  <script>
+    // Change this to your real admin password
+    const RESET_PASSWORD = "1234";
+
+    const ask = (msg) => window.prompt(msg);
+
+    document.getElementById("resetBtn").addEventListener("click", () => {
+      const pw = ask("Enter admin password to reset ALL player data:");
+      if (pw !== RESET_PASSWORD) { alert("❌ Incorrect password."); return; }
+
+      const confirmWord = ask('Type RESET to confirm wiping all player data:');
+      if (confirmWord !== "RESET") { alert("Cancelled."); return; }
+
+      // Tell app.js to perform the actual in-memory reset
+      window.dispatchEvent(new CustomEvent("reset-players"));
+
+      // If you also store players in localStorage, clear that too
+      try { localStorage.removeItem("players"); } catch (e) {}
+
+      // Optional: ping other tabs via storage event
+      try { localStorage.setItem("__players_reset__", String(Date.now())); } catch (e) {}
+
+      alert("✅ Reset request sent.");
+    });
+  </script>
 
   <script type="module" src="app.js"></script>
 </body>
