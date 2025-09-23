@@ -436,17 +436,32 @@ function loop(t){
   }
 
   // Collisions
-  const nowms=performance.now();
-  for(let i=0;i<mobs.length;i++){
-    const m=mobs[i];const dx=me.x-m.x,dy=me.y-m.y;
-    if(dx*dx+dy*dy<(MOB_R+10)*(MOB_R+10)&&nowms-lastHitAt>INVULN_MS){
-      hp-=CONTACT_DAMAGE;lastHitAt=nowms;if(hp<0)hp=0;
+  const nowms = performance.now();
+
+  // skip taking damage / pickups while dead
+  if (!isDead) {
+    for (let i=0;i<mobs.length;i++){
+      const m=mobs[i]; const dx=me.x-m.x, dy=me.y-m.y;
+      if (dx*dx + dy*dy < (MOB_R+10)*(MOB_R+10) && nowms - lastHitAt > INVULN_MS) {
+        hp -= CONTACT_DAMAGE; lastHitAt = nowms; if (hp < 0) hp = 0;
+      }
     }
+  
+    for (let i=coins.length-1;i>=0;i--){
+      const c=coins[i]; const dx=me.x-c.x, dy=me.y-c.y;
+      if (dx*dx + dy*dy < PICKUP_RADIUS*PICKUP_RADIUS) {
+        coins.splice(i,1); score++; coinHud.textContent = score; hp = Math.min(HP_MAX, hp + COIN_HEAL);
+      }
+    }
+
+    if (hp <= 0) killPlayer();
   }
-  for(let i=coins.length-1;i>=0;i--){
-    const c=coins[i];const dx=me.x-c.x,dy=me.y-c.y;
-    if(dx*dx+dy*dy<PICKUP_RADIUS*PICKUP_RADIUS){coins.splice(i,1);score++;coinHud.textContent=score;hp=Math.min(HP_MAX,hp+COIN_HEAL);}
+
+  // Handle pending respawn
+  if (isDead && nowms >= respawnAt) {
+    respawnPlayer();
   }
+
 
   // Idle prune
   for(const [id,o] of others){
