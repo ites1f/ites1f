@@ -44,8 +44,8 @@ const NO_FEED_MS = 2500;
 // 🔀 New: randomized spawning & lifetimes
 const MOB_SPAWN_MIN_MS = 400;   // fastest spawn gap
 const MOB_SPAWN_MAX_MS = 2000;  // slowest spawn gap
-const MOB_DESPAWN_MIN_MS = 3500; // shortest lifetime
-const MOB_DESPAWN_MAX_MS = 8000; // longest lifetime
+const MOB_DESPAWN_MIN_MS = 10000; // shortest lifetime
+const MOB_DESPAWN_MAX_MS = 18000; // longest lifetime
 
 /* ===================== Setup ===================== */
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
