@@ -25,6 +25,13 @@ const CONTACT_DAMAGE = 20;
 const INVULN_MS = 700;
 let lastHitAt = -1;
 
+// Death / Respawn
+const RESPAWN_MS = 5000;          // wait 2s on death
+const RESPAWN_INVULN_MS = 3200;   // spawn shield
+let isDead = false;
+let respawnAt = 0;
+const SPAWN_POINT = { x: cvs.width/2, y: cvs.height/2 };
+
 // Coins
 const COIN_R = 8;
 const PICKUP_RADIUS = 42;
@@ -106,6 +113,23 @@ document.addEventListener("visibilitychange", () => {
 const room = supabase.channel("dots-room", {
   config: { broadcast: { self: true }, presence: { key: uid } }
 });
+
+function killPlayer() {
+  if (isDead) return;
+  isDead = true;
+  respawnAt = performance.now() + RESPAWN_MS;
+  hp = 0;
+  addSysMsg(`${name} died…`);
+}
+
+function respawnPlayer() {
+  isDead = false;
+  me.x = SPAWN_POINT.x;
+  me.y = SPAWN_POINT.y;
+  hp = HP_MAX;
+  lastHitAt = performance.now();         // start invulnerable
+  addSysMsg(`${name} respawned!`);
+}
 
 function smallestVisibleId() {
   const state = room.presenceState();
@@ -385,14 +409,17 @@ function drawMobs(){
 let last=performance.now(),acc=0;
 function loop(t){
   const dt=Math.min(0.05,(t-last)/1000);last=t;
-  const up=keys.has("arrowup")||keys.has("w"),dn=keys.has("arrowdown")||keys.has("s");
-  const lf=keys.has("arrowleft")||keys.has("a"),rt=keys.has("arrowright")||keys.has("d");
-  const speed=240;
-  let kx=(rt?1:0)-(lf?1:0),ky=(dn?1:0)-(up?1:0);
-  let ax=kx+mobile.dx,ay=ky+mobile.dy;
-  const mag=Math.hypot(ax,ay);if(mag>1){ax/=mag;ay/=mag;}
-  me.x=Math.max(0,Math.min(cvs.width,me.x+ax*speed*dt));
-  me.y=Math.max(0,Math.min(cvs.height,me.y+ay*speed*dt));
+  // (inside loop)
+  if (!isDead) {
+    const up=keys.has("arrowup")||keys.has("w"),dn=keys.has("arrowdown")||keys.has("s");
+    const lf=keys.has("arrowleft")||keys.has("a"),rt=keys.has("arrowright")||keys.has("d");
+    const speed=240;
+    let kx=(rt?1:0)-(lf?1:0),ky=(dn?1:0)-(up?1:0);
+    let ax=kx+mobile.dx,ay=ky+mobile.dy;
+    const mag=Math.hypot(ax,ay);if(mag>1){ax/=mag;ay/=mag;}
+    me.x=Math.max(0,Math.min(cvs.width,me.x+ax*speed*dt));
+    me.y=Math.max(0,Math.min(cvs.height,me.y+ay*speed*dt));
+  }
 
   acc+=dt;if(acc>0.1){acc=0;sendState();}
   for(const o of others.values()){
