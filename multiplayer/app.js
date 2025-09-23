@@ -11,7 +11,7 @@ const MOB_COLOR    = "#ef4444";  // mobs = red
 const COIN_COLOR   = "#ffc83d";  // coins = yellow
 
 // Movement smoothing
-let SMOOTH = 12;
+let SMOOTH = 16;
 
 // Idle cleanup
 const IDLE_MOVE_EPS = 2;
