@@ -2,7 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 /* ===================== Config ===================== */
 const SUPABASE_URL = "https://jlbpbizelvnrzadyztfz.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsYnBiaXplbHZucnphZHl6dGZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MzgzMjEsImV4cCI6MjA3NDAxNDMyMX0.DgsIreHYbd6ynUIFlAk8U-j2i0W3qkT9hm41toFFBxI"; // <- put your real anon key
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsYnBiaXplbHZucnphZHl6dGZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MzgzMjEsImV4cCI6MjA3NDAxNDMyMX0.DgsIreHYbd6ynUIFlAk8U-j2i0W3qkT9hm41toFFBxI";
 
 // Colors
 const MY_COLOR     = "#60a5fa";  // you = blue
@@ -11,7 +11,7 @@ const MOB_COLOR    = "#ef4444";  // mobs = red
 const COIN_COLOR   = "#ffc83d";  // coins = yellow
 
 // Movement smoothing
-let SMOOTH = 16;
+let SMOOTH = 12;
 
 // Idle cleanup
 const IDLE_MOVE_EPS = 2;     // px change to count as movement
@@ -27,18 +27,19 @@ let lastHitAt = -1;
 
 // Coins
 const COIN_R = 8;
-const PICKUP_RADIUS = 22;   // ← proximity pickup distance (in addition to player radius)
-const COIN_HEAL = 8;        // ← heal amount per coin
+const PICKUP_RADIUS = 22;   // proximity pickup distance
+const COIN_HEAL = 8;        // heal per coin
 const MAX_COINS = 25;
 
-// Mobs (with anti-merge)
+// Mobs (with anti-merge + mild target variety)
 const MOB_R = 10;
 const MAX_MOBS = 12;
-const MOB_SPEED = 70;      // chase speed
+const MOB_SPEED = 120;      // chase speed
 const MOB_MAX_SPEED = 140;  // clamp total speed
-const SEP_RADIUS = 36;      // separation distance to avoid merging
-const SEP_FORCE = 220;      // strength of separation force
-const MOB_BROADCAST_MS = 150; // how often host syncs mobs
+const SEP_RADIUS = 36;      // separation
+const SEP_FORCE = 220;
+const HOST_BROADCAST_MS = 150; // host sends mob positions
+const NO_FEED_MS = 2500;       // if no mob packets, watchdog may promote host
 
 /* ===================== Setup ===================== */
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -69,36 +70,46 @@ const coins = [];
 let score = 0;
 const coinHud = document.getElementById("coinVal");
 
-// Mobs state
-let mobs = []; // objects: {x,y,vx,vy, tx?, ty?}
-let isHost = false; // who simulates & broadcasts mobs
+// Mobs state (peer-hosted)
+let mobs = []; // {x,y,vx,vy, tx?, ty?}
+let isHost = false;
 let lastMobsBroadcast = 0;
 let lastMobsSeq = 0;
+let lastMobsHeard = 0;
 
 /* ===================== Realtime ===================== */
 const room = supabase.channel("dots-room", {
   config: { broadcast: { self: true }, presence: { key: uid } }
 });
 
-// Host election: smallest presence key (uid) becomes host
-function recomputeHost() {
+function iAmSmallest() {
   const state = room.presenceState();
-  const keys = Object.keys(state).sort(); // lexicographic
-  const hostId = keys[0];
-  isHost = (hostId === uid);
+  const keys = Object.keys(state).sort();
+  if (keys.length === 0) return true;
+  return keys[0] === uid;
+}
+function recomputeHost() {
+  const prev = isHost;
+  isHost = iAmSmallest();
+  if (isHost && !prev) addSysMsg("You are now host (mobs AI).");
+  if (!isHost && prev) addSysMsg("Another player became host.");
 }
 
 room.on("presence", { event: "sync" }, () => {
-  document.getElementById("cnt").textContent = Object.keys(room.presenceState()).length;
+  const state = room.presenceState();
+  document.getElementById("cnt").textContent = Object.keys(state).length;
   recomputeHost();
   sendState();
 });
+room.on("presence", { event: "join"  }, recomputeHost);
+room.on("presence", { event: "leave" }, recomputeHost);
 
 room.subscribe((status) => {
   if (status === "SUBSCRIBED") {
     room.track({ id: uid, name, color: MY_COLOR, joinedAt: Date.now() });
     addSysMsg("Joined the room.");
     sendState();
+    setTimeout(recomputeHost, 300); // give presence a moment
   }
 });
 
@@ -122,29 +133,28 @@ room.on("broadcast", { event: "state" }, (payload) => {
   const moved = Math.hypot((p.x - prev.tx), (p.y - prev.ty)) > IDLE_MOVE_EPS;
   prev.tx = p.x; prev.ty = p.y;
   prev.name = p.name;
-  prev.color = OTHER_COLOR; // always white locally
+  prev.color = OTHER_COLOR;
   prev.lastHeardTs = nowTs;
   if (moved) prev.lastActiveTs = nowTs;
 });
 
 // mobs sync (from host)
 room.on("broadcast", { event: "mobs" }, (payload) => {
-  if (isHost) return; // host ignores
+  if (isHost) return; // host ignores its own stream
+  lastMobsHeard = performance.now();
   const data = payload.payload;
   if (!data || typeof data.seq !== "number" || !Array.isArray(data.mobs)) return;
   if (data.seq <= lastMobsSeq) return;
   lastMobsSeq = data.seq;
 
-  // Ensure mobs array sizes match target
+  // Resize local array
   if (mobs.length < data.mobs.length) {
-    for (let i = mobs.length; i < data.mobs.length; i++) {
+    for (let i = mobs.length; i < data.mobs.length; i++)
       mobs.push({ x: data.mobs[i][0], y: data.mobs[i][1], vx:0, vy:0, tx:data.mobs[i][0], ty:data.mobs[i][1] });
-    }
   } else if (mobs.length > data.mobs.length) {
     mobs.length = data.mobs.length;
   }
-
-  // Update targets; we’ll lerp towards them to avoid snapping
+  // Update targets; we lerp to avoid snapping
   for (let i = 0; i < data.mobs.length; i++) {
     const [nx, ny] = data.mobs[i];
     const m = mobs[i];
@@ -154,7 +164,7 @@ room.on("broadcast", { event: "mobs" }, (payload) => {
   }
 });
 
-// chat
+/* ===================== Chat ===================== */
 const shownMsgIds = new Set();
 room.on("broadcast", { event: "chat" }, (payload) => {
   const m = payload.payload;
@@ -163,7 +173,6 @@ room.on("broadcast", { event: "chat" }, (payload) => {
   addChatMsg(m.name, m.text, m.id === uid ? "#60a5fa" : "#e5e7eb");
 });
 
-/* ===================== Chat UI ===================== */
 const chatInput = document.getElementById("chatInput");
 chatInput.addEventListener("keydown", (e) => {
   if (e.key !== "Enter") return;
@@ -254,7 +263,7 @@ function spawnCoin(){
 }
 setInterval(()=>{ if (coins.length < MAX_COINS) spawnCoin(); }, 1500);
 
-/* ===================== Mobs ===================== */
+/* ===================== Host: Mobs simulation ===================== */
 function spawnMob(){
   const side = Math.floor(Math.random()*4);
   let x=0,y=0;
@@ -262,27 +271,50 @@ function spawnMob(){
   if (side === 1) { x = cvs.width+20; y = Math.random()*cvs.height; }
   if (side === 2) { x = Math.random()*cvs.width; y = cvs.height+20; }
   if (side === 3) { x = -20; y = Math.random()*cvs.height; }
-  mobs.push({ x, y, vx: 0, vy: 0 });
+  // add slight velocity jitter so they don't look identical
+  mobs.push({ x, y, vx: (Math.random()-0.5)*40, vy: (Math.random()-0.5)*40, flavor: Math.random() });
 }
 
-// Host simulates mobs + broadcasts
+function sampleTargetsForMob(m){
+  // small randomness so not all pick the exact same player
+  // 70% nearest player, 30% random player (if any)
+  const players = [{x:me.x,y:me.y}];
+  for (const o of others.values()) players.push({x:o.tx ?? o.x, y:o.ty ?? o.y});
+  if (players.length === 0) return { x: cvs.width/2, y: cvs.height/2 };
+
+  if (Math.random() < 0.7) {
+    // nearest
+    let best = players[0], bestD2 = Infinity;
+    for (const p of players) {
+      const dx = p.x - m.x, dy = p.y - m.y;
+      const d2 = dx*dx + dy*dy;
+      if (d2 < bestD2) { bestD2 = d2; best = p; }
+    }
+    return best;
+  } else {
+    // random sample
+    return players[Math.floor(Math.random()*players.length)];
+  }
+}
+
 function hostUpdateMobs(dt, t){
   // Spawn
   if (mobs.length < MAX_MOBS && Math.random() < dt * 0.8) {
     spawnMob();
   }
 
-  // Integrate with chase + separation
+  // Integrate (chase + separation)
   for (let i = 0; i < mobs.length; i++) {
     const m = mobs[i];
 
-    // Chase force
-    let dx = me.x - m.x, dy = me.y - m.y;
+    // pick a target
+    const target = sampleTargetsForMob(m);
+    let dx = target.x - m.x, dy = target.y - m.y;
     let len = Math.hypot(dx, dy) || 1;
-    let cx = (dx/len) * MOB_SPEED;  // desired velocity component
+    let cx = (dx/len) * MOB_SPEED;
     let cy = (dy/len) * MOB_SPEED;
 
-    // Separation force from neighbors
+    // separation
     let sx = 0, sy = 0;
     for (let j = 0; j < mobs.length; j++) if (j !== i) {
       const n = mobs[j];
@@ -290,29 +322,26 @@ function hostUpdateMobs(dt, t){
       const d2 = rx*rx + ry*ry;
       if (d2 > 0 && d2 < SEP_RADIUS*SEP_RADIUS) {
         const d = Math.sqrt(d2);
-        const w = (SEP_RADIUS - d) / SEP_RADIUS; // 0..1
+        const w = (SEP_RADIUS - d) / SEP_RADIUS;
         sx += (rx / (d || 1)) * (SEP_FORCE * w);
         sy += (ry / (d || 1)) * (SEP_FORCE * w);
       }
     }
 
-    // Combine (simple Euler)
-    m.vx = cx + sx;
-    m.vy = cy + sy;
-
-    // Clamp speed
+    // combine, clamp, integrate
+    m.vx = cx + sx + m.vx*0.05; // tiny inertia
+    m.vy = cy + sy + m.vy*0.05;
     const sp = Math.hypot(m.vx, m.vy);
     if (sp > MOB_MAX_SPEED) {
       m.vx = m.vx / sp * MOB_MAX_SPEED;
       m.vy = m.vy / sp * MOB_MAX_SPEED;
     }
-
     m.x += m.vx * dt;
     m.y += m.vy * dt;
   }
 
-  // Periodic broadcast
-  if (t - lastMobsBroadcast > MOB_BROADCAST_MS) {
+  // Broadcast periodically
+  if (t - lastMobsBroadcast > HOST_BROADCAST_MS) {
     lastMobsBroadcast = t;
     lastMobsSeq++;
     room.send({
@@ -323,13 +352,13 @@ function hostUpdateMobs(dt, t){
   }
 }
 
-// Non-host interpolates towards targets (no spawning, no AI)
+/* ===================== Client: follow host mobs ===================== */
 function clientFollowMobs(dt){
   for (const m of mobs) {
     if (m.tx === undefined) continue;
-    const factor = Math.min(1, 10 * dt); // soft follow
-    m.x = (m.x ?? m.tx) + (m.tx - (m.x ?? m.tx)) * factor;
-    m.y = (m.y ?? m.ty) + (m.ty - (m.y ?? m.ty)) * factor;
+    const k = Math.min(1, 12 * dt); // lerp speed
+    m.x = (m.x ?? m.tx) + (m.tx - (m.x ?? m.tx)) * k;
+    m.y = (m.y ?? m.ty) + (m.ty - (m.y ?? m.ty)) * k;
   }
 }
 
@@ -348,7 +377,6 @@ function drawHPBar(x, y, w=42, h=6){
   ctx.fillRect(left, top, Math.max(0, w * pct), h);
   ctx.strokeStyle = "rgba(255,255,255,0.6)"; ctx.lineWidth = 1; ctx.strokeRect(left + .5, top + .5, w - 1, h - 1);
 }
-
 function drawMobs(){
   for (const m of mobs) {
     ctx.beginPath(); ctx.globalAlpha = 0.22;
@@ -395,6 +423,16 @@ function loop(t){
       const ghosted = (now - o.lastHeardTs) > (GHOST_SECS * 1000);
       const idle    = (now - o.lastActiveTs) > (IDLE_SECS * 1000);
       if (ghosted || idle) others.delete(id);
+    }
+  }
+
+  // Watchdog: if no mobs feed, self-promote if I should be host
+  {
+    const now = performance.now();
+    if (!isHost && (now - lastMobsHeard > NO_FEED_MS) && iAmSmallest()) {
+      isHost = true;
+      addSysMsg("No host detected. Promoted to host for mob AI.");
+      lastMobsSeq = 0; // reset seq to accept our own stream
     }
   }
 
