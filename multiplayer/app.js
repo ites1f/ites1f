@@ -117,7 +117,7 @@ function recomputeHost(){
   const nextIsHost = (chosen === uid);
   if (nextIsHost !== current) {
     isHost = nextIsHost;
-    addSysMsg(isHost ? "You are now host (mobs AI)." : "Another player became host.");
+    //addSysMsg(isHost ? "You are now host (mobs AI)." : "Another player became host.");
     if (isHost) lastMobsSeq = 0;
   }
 }
