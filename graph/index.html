@@ -5,45 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Graph Calc</title>
   <style>
-    :root{ --bg:#0b1220; --panel:#0f172a; --ink:#e5e7eb; --muted:#94a3b8; --accent:#22d3ee; }
+    :root{ --bg:#0b1220; --panel:#0f172a; --ink:#e5e7eb; --muted:#94a3b8; }
     *{ box-sizing:border-box; }
     html, body { height:100%; }
     body{ margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans; }
 
     /* Fullscreen canvas */
-    #stage {
-      position: relative;
-      width: 100vw;
-      height: 100vh;
-      overflow: hidden;
-    }
-    canvas#c {
-      width: 100%;
-      height: 100%;
-      display: block;
-    }
+    #stage { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+    canvas#c { width: 100%; height: 100%; display: block; }
 
-    /* Compact control panel (≈ ~1/16 of screen, responsive) */
+    /* Compact control panel (~1/16 screen, responsive) */
     .panel {
-      position: fixed;
-      right: 16px;
-      bottom: 16px;
-      width: min(360px, 24vw);
-      max-width: 92vw;
+      position: fixed; right: 16px; bottom: 16px;
+      width: min(360px, 24vw); max-width: 92vw;
       background: color-mix(in oklab, var(--panel) 88%, black 0%);
-      border: 1px solid #1f2937;
-      border-radius: 14px;
-      padding: 12px;
-      display: grid;
-      gap: 8px;
-      box-shadow: 0 6px 24px rgba(0,0,0,.35);
+      border: 1px solid #1f2937; border-radius: 14px; padding: 12px;
+      display: grid; gap: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.35);
       backdrop-filter: blur(2px);
     }
     .row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
     .muted{ color:var(--muted); font-size:12px; }
     textarea{
-      width:100%; height:96px;
-      background:#0b1220; color:var(--ink);
+      width:100%; height:96px; background:#0b1220; color:var(--ink);
       border:1px solid #1f2937; border-radius:10px; padding:10px; resize:vertical;
     }
     input[type="range"]{ width: 160px; }
@@ -53,7 +36,6 @@
       border-radius:999px; cursor:pointer; font-size:13px;
     }
     button:hover{ background:#111827; }
-    .accent{ background:var(--accent); color:#001018; border:none; }
     label.toggle{ display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border:1px solid #1f2937; border-radius:999px; background:#0f172a; }
     .err{ color:#fda4af; font-size:13px; min-height: 1.2em; }
 
@@ -63,9 +45,7 @@
 </head>
 <body>
 
-  <div id="stage">
-    <canvas id="c"></canvas>
-  </div>
+  <div id="stage"><canvas id="c"></canvas></div>
 
   <!-- Compact control panel -->
   <div class="panel" role="region" aria-label="Graph Controls">
@@ -74,12 +54,12 @@
 
     <div class="row">
       <span class="muted">Scale</span>
-      <input id="scale" type="range" min="5" max="2000" value="40" />
+      <input id="scale" type="range" min="5" max="2000" value="40" step="1" />
       <span id="scaleLabel" class="muted">40 px/unit</span>
     </div>
 
     <div class="row">
-      <button id="resetFns">Reset function</button>
+      <button id="resetFns">Clear</button>
       <button id="resetView">Reset view</button>
       <label class="toggle"><input type="checkbox" id="autoUpdate" checked /> Auto update</label>
     </div>
@@ -90,7 +70,7 @@
       <summary>Parser self-tests</summary>
       <div id="testlog" class="tests">(not run yet)</div>
       <div class="row" style="margin-top:6px;">
-        <button id="runTests" class="accent">Run tests</button>
+        <button id="runTests">Run tests</button>
       </div>
     </details>
   </div>
@@ -113,7 +93,7 @@
   const CONSTS = { PI: Math.PI, E: Math.E };
 
   function tokenize(s){
-    const tokens=[]; let i=0; s=s.replaceAll(' ','').replaceAll('\t','');
+    const tokens=[]; let i=0; s=s.replaceAll(' ','').replaceAll('\\t','');
     const isNum=c=>/[0-9.]/.test(c);
     const isAlpha=c=>/[a-zA-Z_]/.test(c);
     while(i<s.length){
@@ -131,9 +111,7 @@
         else throw new Error('Unknown token: '+name);
         i=j; continue;
       }
-      if('+-*/^(),'.includes(c)){
-        tokens.push({type:c}); i++; continue;
-      }
+      if('+-*/^(),'.includes(c)){ tokens.push({type:c}); i++; continue; }
       throw new Error('Bad character: '+c);
     }
     return tokens;
@@ -149,6 +127,7 @@
         if(!stack.length) throw new Error('Unexpected comma');
       }
       else if(t.type in OPS){
+        // unary minus -> (0 - expr)
         if(t.type==='-' && (prev==null || (prev.type in OPS) || prev.type==='(' || prev.type===',')){
           out.push({type:'num', v:0});
         }
@@ -202,7 +181,7 @@
   const runBtn = document.getElementById('runTests');
   const testlog = document.getElementById('testlog');
 
-  let scale = 40; // px per unit
+  let scale = 40;            // px per unit (same for X and Y)
   let origin = { x: 0, y: 0 };
   let dragging = false; let dragStart = { x:0, y:0, ox:0, oy:0 };
 
@@ -214,34 +193,40 @@
   }
   function formatTick(value, step){
     const d = Math.max(0, Math.min(8, -Math.floor(Math.log10(step))+1));
-    const s = value.toFixed(d);
-    return s.replace(/\.0+$/,'').replace(/(\.\d*?)0+$/,'$1');
+    let s = value.toFixed(d);
+    if (s.includes('.')) { s = s.replace(/0+$/, ''); if (s.endsWith('.')) s = s.slice(0,-1); }
+    return s;
   }
 
   function drawGridAxes(w,h){
     ctx.lineWidth = 1;
-    // grid
-    ctx.strokeStyle = '#1f2937';
-    const xStep = niceStep(w/scale/10);
-    for(let x = Math.ceil(-origin.x/scale/xStep)*xStep; x < (w-origin.x)/scale; x+=xStep){
-      const sx = origin.x + x*scale; ctx.beginPath(); ctx.moveTo(sx,0); ctx.lineTo(sx,h); ctx.stroke();
+
+    // ONE common world step → square grid cells
+    const xSpan = w / scale;   // world units horizontally
+    const ySpan = h / scale;   // world units vertically
+    const step  = niceStep(Math.min(xSpan, ySpan) / 10);
+
+    // Grid (extra muted)
+    ctx.strokeStyle = '#111827';
+    for (let x = Math.ceil(-origin.x/scale/step)*step; x < (w-origin.x)/scale; x += step) {
+      const sx = origin.x + x*scale; ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, h); ctx.stroke();
     }
-    const yStep = niceStep(h/scale/10);
-    for(let y = Math.ceil((origin.y-h)/scale/yStep)*yStep; y < origin.y/scale; y+=yStep){
-      const sy = origin.y - y*scale; ctx.beginPath(); ctx.moveTo(0,sy); ctx.lineTo(w,sy); ctx.stroke();
+    for (let y = Math.ceil((origin.y-h)/scale/step)*step; y < origin.y/scale; y += step) {
+      const sy = origin.y - y*scale; ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(w, sy); ctx.stroke();
     }
-    // axes
-    ctx.strokeStyle = '#94a3b8';
-    ctx.beginPath(); ctx.moveTo(0,origin.y); ctx.lineTo(w,origin.y); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(origin.x,0); ctx.lineTo(origin.x,h); ctx.stroke();
-    // tick labels
+
+    // Axes (slightly brighter)
+    ctx.strokeStyle = '#6b7280';
+    ctx.beginPath(); ctx.moveTo(0, origin.y); ctx.lineTo(w, origin.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(origin.x, 0); ctx.lineTo(origin.x, h); ctx.stroke();
+
+    // Tick labels (same step)
     ctx.fillStyle = '#94a3b8'; ctx.font = '12px system-ui';
-    const xStepL = xStep, yStepL = yStep;
-    for(let x = Math.ceil(-origin.x/scale/xStepL)*xStepL; x < (w-origin.x)/scale; x+=xStepL){
-      if (Math.abs(x) < 1e-9) continue; const sx = origin.x + x*scale; ctx.fillText(formatTick(x, xStepL), sx+2, origin.y+12);
+    for (let x = Math.ceil(-origin.x/scale/step)*step; x < (w-origin.x)/scale; x += step) {
+      if (Math.abs(x) < 1e-9) continue; const sx = origin.x + x*scale; ctx.fillText(formatTick(x, step), sx+2, origin.y+12);
     }
-    for(let y = Math.ceil((origin.y-h)/scale/yStepL)*yStepL; y < origin.y/scale; y+=yStepL){
-      if (Math.abs(y) < 1e-9) continue; const sy = origin.y - y*scale; ctx.fillText(formatTick(y, yStepL), origin.x+6, sy-2);
+    for (let y = Math.ceil((origin.y-h)/scale/step)*step; y < origin.y/scale; y += step) {
+      if (Math.abs(y) < 1e-9) continue; const sy = origin.y - y*scale; ctx.fillText(formatTick(y, step), origin.x+6, sy-2);
     }
   }
 
@@ -261,14 +246,22 @@
     const dpr = window.devicePixelRatio || 1;
     const w = c.clientWidth * dpr, h = c.clientHeight * dpr;
     if (c.width!==w || c.height!==h){ c.width=w; c.height=h; }
-    ctx.fillStyle = '#0b1220'; ctx.fillRect(0,0,w,h);
+
+    // Background
+    ctx.fillStyle = '#0b1220';
+    ctx.fillRect(0,0,w,h);
+
+    // Grid & axes
     drawGridAxes(w,h);
+
+    // Functions (desaturated grayscale lines)
     errEl.textContent = '';
     const lines = fxArea.value.split('\n').map(s=>s.trim()).filter(Boolean);
-    const hues = [190,160,120,60,20,300,260,0];
+    const lights = [70, 74, 78, 82, 86]; // varying lightness, 0% saturation
     lines.forEach((line,i)=>{
-      try{ const fn = compile(line.replaceAll('−','-')); if(!fn) return;
-        const color = `hsl(${hues[i%hues.length]} 80% 60%)`;
+      try{
+        const fn = compile(line.replaceAll('−','-')); if(!fn) return;
+        const color = `hsl(210 0% ${lights[i%lights.length]}%)`; // gray
         plot(fn, w, h, color);
       }catch(e){ errEl.textContent = String(e.message||e); }
     });
@@ -283,11 +276,13 @@
 
   // UI bindings
   scaleInput.addEventListener('input', ()=>{
-    scale = parseInt(scaleInput.value,10);
+    scale = parseInt(scaleInput.value,10);             // integer zoom
     scaleLabel.textContent = scale+' px/unit';
     render();
   });
-  document.getElementById('resetFns').addEventListener('click', ()=>{ fxArea.value = ''; render(); });
+  document.getElementById('resetFns').addEventListener('click', ()=>{
+    fxArea.value = ''; render();                       // starts blank
+  });
   document.getElementById('resetView').addEventListener('click', ()=>{
     scale=40; scaleInput.value='40'; scaleLabel.textContent='40 px/unit'; centerOrigin(); render();
   });
@@ -300,8 +295,8 @@
     e.preventDefault();
     const s = Math.sign(e.deltaY);
     const prev=scale;
-    scale = Math.min(2000, Math.max(5, scale * (s>0?0.9:1.1)));
-    if(scale!==prev){ scaleInput.value=String(Math.round(scale)); scaleLabel.textContent=scale+' px/unit'; render(); }
+    scale = Math.min(2000, Math.max(5, Math.round(scale * (s>0?0.9:1.1)))); // keep integer
+    if(scale!==prev){ scaleInput.value=String(scale); scaleLabel.textContent=scale+' px/unit'; render(); }
   }, {passive:false});
   c.addEventListener('mousedown', (e)=>{ dragging=true; dragStart={ x:e.clientX, y:e.clientY, ox:origin.x, oy:origin.y }; });
   window.addEventListener('mousemove', (e)=>{ if(!dragging) return; const dpr=window.devicePixelRatio||1; origin.x = dragStart.ox + (e.clientX-dragStart.x)*dpr; origin.y = dragStart.oy + (e.clientY-dragStart.y)*dpr; render(); });
@@ -310,7 +305,7 @@
   // resize-aware
   const ro = new ResizeObserver(()=>render()); ro.observe(c);
 
-  // --- Self tests ---
+  // --- Self tests (kept for sanity) ---
   runBtn.addEventListener('click', runTests);
   function approx(a,b,eps=1e-9){ return Math.abs(a-b) <= eps; }
   function line(msg, ok){ return `${ok?'✅':'❌'} ${msg}`; }
@@ -331,7 +326,7 @@
     }catch(e){ testlog.textContent = 'Test crashed: '+(e?.message||e); }
   }
 
-  // initial paint (blank graph, no functions)
+  // initial paint (blank)
   render();
 </script>
 </body>
