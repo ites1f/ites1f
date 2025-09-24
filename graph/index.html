@@ -44,8 +44,7 @@
       display:inline-flex; align-items:center; gap:6px; padding:4px 8px;
       border:1px solid var(--border); border-radius:999px; background:var(--ctl);
     }
-    .err{ color:#d4d4d4; font-size:13px; min-height: 1.2em; }
-
+    .err{ color:#d4d4d4; font-size:13px; min-height: 1.2em; white-space: pre-wrap; }
     details > summary{ cursor:pointer; color:var(--muted); font-size:12px; }
     .tests{
       font-size:12px; white-space:pre-wrap;
@@ -71,14 +70,12 @@ x^2 + b*x
 (1, 2.5)
 -3, 0.5"></textarea>
 
-    <!-- Scale -->
     <div class="row">
       <span class="muted">Scale</span>
       <input id="scale" type="range" min="5" max="2000" value="40" step="1" />
       <span id="scaleLabel" class="muted">40 px/unit</span>
     </div>
 
-    <!-- Click-to-add points -->
     <div class="row">
       <label class="toggle"><input type="checkbox" id="clickAdd" /> Click canvas to add (x,y)</label>
     </div>
@@ -101,6 +98,13 @@ x^2 + b*x
   </div>
 
 <script type="module">
+  // === Utilities (robustness) ===
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  function toFiniteNumber(x, fallback){
+    const n = Number(x);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
   // --- CSP-safe math parser (shunting-yard -> RPN -> eval) ---
   const OPS = {
     '+': {p:1, a:'L', f:(a,b)=>a+b},
@@ -152,7 +156,6 @@ x^2 + b*x
         if(!stack.length) throw new Error('Unexpected comma');
       }
       else if(t.type in OPS){
-        // unary minus -> (0 - expr)
         if(t.type==='-' && (prev==null || (prev.type in OPS) || prev.type==='(' || prev.type===',')){
           out.push({type:'num', v:0});
         }
@@ -212,37 +215,44 @@ x^2 + b*x
   const testlog = document.getElementById('testlog');
   const clickAdd = document.getElementById('clickAdd');
 
-  let scale = 40;            // px per unit (same for X and Y)
+  let scale = 40;            // px per unit (same for X and Y) — validated below
   let origin = { x: 0, y: 0 };
   let dragging = false; let dragStart = { x:0, y:0, ox:0, oy:0 };
 
+  // Robust step: always return something sane
   function niceStep(target){
-    const exp = Math.floor(Math.log10(target));
-    const base = target / 10 ** exp;
-    let nice = base >= 5 ? 5 : base >= 2 ? 2 : 1;
-    return nice * 10 ** exp;
+    const t = toFiniteNumber(target, 1);
+    if (!(t > 0)) return 1;
+    const exp = Math.floor(Math.log10(t));
+    const base = t / (10 ** exp);
+    let niceBase = base >= 5 ? 5 : base >= 2 ? 2 : 1;
+    const step = niceBase * (10 ** exp);
+    return (Number.isFinite(step) && step > 0) ? step : 1;
   }
   function formatTick(value, step){
-    const d = Math.max(0, Math.min(8, -Math.floor(Math.log10(step))+1));
-    let s = value.toFixed(d);
-    if (s.includes('.')) { s = s.replace(/0+$/, ''); if (s.endsWith('.')) s = s.slice(0,-1); }
-    return s;
+    const s = toFiniteNumber(step, 1);
+    const d = Math.max(0, Math.min(8, -Math.floor(Math.log10(s))+1));
+    let out = toFiniteNumber(value, 0).toFixed(d);
+    if (out.includes('.')) { out = out.replace(/0+$/, ''); if (out.endsWith('.')) out = out.slice(0,-1); }
+    return out;
   }
 
   function drawGridAxes(w,h){
     ctx.lineWidth = 1;
 
-    // ONE common world step → square grid cells
-    const xSpan = w / scale, ySpan = h / scale;
-    const step  = niceStep(Math.min(xSpan, ySpan) / 10);
+    const sx = toFiniteNumber(scale, 40);
+    const xSpan = (w / sx) || 1;
+    const ySpan = (h / sx) || 1;
+    let step  = niceStep(Math.min(xSpan, ySpan) / 10);
+    if (!(step > 0)) step = 1;
 
     // Grid (pure gray)
     ctx.strokeStyle = '#1a1a1a';
-    for (let x = Math.ceil(-origin.x/scale/step)*step; x < (w-origin.x)/scale; x += step) {
-      const sx = origin.x + x*scale; ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, h); ctx.stroke();
+    for (let x = Math.ceil(-origin.x/sx/step)*step; x < (w-origin.x)/sx; x += step) {
+      const gx = origin.x + x*sx; ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, h); ctx.stroke();
     }
-    for (let y = Math.ceil((origin.y-h)/scale/step)*step; y < origin.y/scale; y += step) {
-      const sy = origin.y - y*scale; ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(w, sy); ctx.stroke();
+    for (let y = Math.ceil((origin.y-h)/sx/step)*step; y < origin.y/sx; y += step) {
+      const gy = origin.y - y*sx; ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke();
     }
 
     // Axes (slightly brighter)
@@ -252,22 +262,23 @@ x^2 + b*x
 
     // Tick labels (gray)
     ctx.fillStyle = '#a3a3a3'; ctx.font = '12px system-ui';
-    for (let x = Math.ceil(-origin.x/scale/step)*step; x < (w-origin.x)/scale; x += step) {
-      if (Math.abs(x) < 1e-9) continue; const sx = origin.x + x*scale; ctx.fillText(formatTick(x, step), sx+2, origin.y+12);
+    for (let x = Math.ceil(-origin.x/sx/step)*step; x < (w-origin.x)/sx; x += step) {
+      if (Math.abs(x) < 1e-9) continue; const gx = origin.x + x*sx; ctx.fillText(formatTick(x, step), gx+2, origin.y+12);
     }
-    for (let y = Math.ceil((origin.y-h)/scale/step)*step; y < origin.y/scale; y += step) {
-      if (Math.abs(y) < 1e-9) continue; const sy = origin.y - y*scale; ctx.fillText(formatTick(y, step), origin.x+6, sy-2);
+    for (let y = Math.ceil((origin.y-h)/sx/step)*step; y < origin.y/sx; y += step) {
+      if (Math.abs(y) < 1e-9) continue; const gy = origin.y - y*sx; ctx.fillText(formatTick(y, step), origin.x+6, gy-2);
     }
   }
 
   function plot(fn, w, h, color, env){
     ctx.lineWidth = 2; ctx.strokeStyle = color; ctx.beginPath();
-    const step = 1/scale; let first=true;
-    const xMin = -origin.x/scale, xMax = (w-origin.x)/scale;
+    const sx = toFiniteNumber(scale, 40);
+    const step = 1/sx; let first=true;
+    const xMin = -origin.x/sx, xMax = (w-origin.x)/sx;
     for(let x=xMin; x<=xMax; x+=step){
       let y = fn(x, env); if(!Number.isFinite(y)){ first=true; continue; }
-      const sx = origin.x + x*scale; const sy = origin.y - y*scale;
-      if(first){ ctx.moveTo(sx,sy); first=false; } else { ctx.lineTo(sx,sy); }
+      const px = origin.x + x*sx; const py = origin.y - y*sx;
+      if(first){ ctx.moveTo(px,py); first=false; } else { ctx.lineTo(px,py); }
     }
     ctx.stroke();
   }
@@ -278,97 +289,99 @@ x^2 + b*x
     const pts = [];
     const vars = {};
     const lines = text.split('\n').map(s=>s.trim()).filter(Boolean);
-  
-    // variable assignment: name = number (scientific notation allowed)
+
     const varRe = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([+-]?\d*\.?\d+(?:e[+-]?\d+)?)$/i;
-    // point: (x,y) or x,y  (strict comma to avoid confusing with "x - y")
     const ptRe  = /^\(?\s*([+-]?\d*\.?\d+(?:e[+-]?\d+)?)\s*,\s*([+-]?\d*\.?\d+(?:e[+-]?\d+)?)\s*\)?$/i;
-    // optional “f(x) = ” style header
     const defHead = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\s*x\s*\)\s*=\s*/i;
-  
-    for (let raw of lines){
+
+    for(let raw of lines){
       const line = raw.replace(defHead,''); // drop f(x)= if present
-  
-      // 1) variables
+
       const mv = varRe.exec(line);
-      if (mv){ vars[mv[1]] = parseFloat(mv[2]); continue; }
-  
-      // 2) points
+      if(mv){ vars[mv[1]] = parseFloat(mv[2]); continue; }
+
       const mp = ptRe.exec(line);
-      if (mp){ pts.push({ x:parseFloat(mp[1]), y:parseFloat(mp[2]) }); continue; }
-  
-      // 3) everything else is a function expr of x
+      if(mp){ pts.push({ x:parseFloat(mp[1]), y:parseFloat(mp[2]) }); continue; }
+
       fns.push(line);
     }
     return { fns, pts, vars };
   }
-  
 
   function drawPoints(w,h, pts){
     ctx.lineWidth = 1.5;
     for(const p of pts){
-      const sx = origin.x + p.x*scale;
-      const sy = origin.y - p.y*scale;
+      const px = origin.x + p.x*scale;
+      const py = origin.y - p.y*scale;
       ctx.beginPath();
-      ctx.arc(sx, sy, Math.max(2, 4), 0, Math.PI*2);
+      ctx.arc(px, py, Math.max(2, 4), 0, Math.PI*2);
       ctx.fillStyle = '#e6e6e6';
       ctx.strokeStyle = '#6b6b6b';
       ctx.fill(); ctx.stroke();
     }
   }
 
+  function safeCanvasSize(){
+    const dpr = toFiniteNumber(window.devicePixelRatio, 1) || 1;
+    let w = Math.max(1, Math.floor(c.clientWidth * dpr));
+    let h = Math.max(1, Math.floor(c.clientHeight * dpr));
+    return { w, h, dpr };
+  }
+
   function render(){
-    const dpr = window.devicePixelRatio || 1;
-    const w = c.clientWidth * dpr, h = c.clientHeight * dpr;
-    if (c.width!==w || c.height!==h){ c.width=w; c.height=h; }
+    try{
+      // validate scale
+      scale = clamp(Math.round(toFiniteNumber(scale, 40)), 5, 2000);
+      scaleInput.value = String(scale);
+      scaleLabel.textContent = scale + ' px/unit';
 
-    // Background
-    ctx.fillStyle = '#0a0a0a'; ctx.fillRect(0,0,w,h);
+      const { w, h } = safeCanvasSize();
+      if (c.width!==w || c.height!==h){ c.width=w; c.height=h; }
 
-    // Grid & axes
-    drawGridAxes(w,h);
+      // Background
+      ctx.fillStyle = '#0a0a0a'; ctx.fillRect(0,0,w,h);
 
-    // Read box → vars, functions, points
-    // Read box → vars, functions, points
-    errEl.textContent = '';
-    const { fns, pts, vars } = splitBox(fxArea.value);
-    
-    // Draw functions (use canvas-safe, comma-style HSL; fallback to hex)
-    const hues = [0,30,60,120,180,210,240,270,300];
-    fns.forEach((line,i)=>{
-      try{
-        const expr = line.replaceAll('−','-'); // normalize minus
-        const fn = compile(expr);
-        // primary color (works on all canvas impls)
-        let color = `hsl(${hues[i % hues.length]}, 75%, 55%)`;
-        // super-safe fallback if the browser rejects hsl(): use hex palette
-        const fallback = ['#ff6b6b','#ffd166','#06d6a0','#4cc9f0','#a78bfa','#f472b6','#f59e0b','#22c55e','#60a5fa'];
-        try { ctx.strokeStyle = color; } catch { color = fallback[i % fallback.length]; }
-    
-        plot(fn, w, h, color, vars);
-      }catch(e){
-        errEl.textContent = 'Error: ' + String(e?.message || e);
-        console.error(e);
-      }
-    });
-    
-    // Draw points last so they sit on top
-    drawPoints(w,h, pts);
-    
+      // Grid & axes
+      drawGridAxes(w,h);
+
+      // Read box → vars, functions, points
+      errEl.textContent = '';
+      const { fns, pts, vars } = splitBox(fxArea.value);
+
+      // Draw functions (safe HSL; fallback hex)
+      const hues = [0,30,60,120,180,210,240,270,300];
+      const fallback = ['#ff6b6b','#ffd166','#06d6a0','#4cc9f0','#a78bfa','#f472b6','#f59e0b','#22c55e','#60a5fa'];
+      fns.forEach((line,i)=>{
+        try{
+          const expr = line.replaceAll('−','-'); // normalize minus
+          const fn = compile(expr);
+          let color = `hsl(${hues[i % hues.length]}, 75%, 55%)`;
+          // If a browser throws on color assignment (rare), use hex fallback.
+          try { ctx.strokeStyle = color; } catch { color = fallback[i % fallback.length]; }
+          plot(fn, w, h, color, vars);
+        }catch(e){ errEl.textContent += (errEl.textContent?'\n':'') + 'Fn error: ' + String(e?.message||e); }
+      });
+
+      // Draw points on top
+      drawPoints(w,h, pts);
+    }catch(e){
+      // Never let a thrown error skip the frame silently
+      errEl.textContent = 'Render error: ' + String(e?.message || e);
+      console.error(e);
+    }
   }
 
   // center origin initially
   function centerOrigin(){
-    const dpr = window.devicePixelRatio || 1;
-    origin.x = (c.clientWidth * dpr)/2; origin.y = (c.clientHeight * dpr)/2;
+    const { w, h } = safeCanvasSize();
+    origin.x = w/2; origin.y = h/2;
   }
   centerOrigin();
 
   // UI bindings
-  const scaleInput = document.getElementById('scale');
-  const scaleLabel = document.getElementById('scaleLabel');
   scaleInput.addEventListener('input', ()=>{
-    scale = parseInt(scaleInput.value,10);
+    const val = toFiniteNumber(scaleInput.value, 40);
+    scale = clamp(Math.round(val), 5, 2000);
     scaleLabel.textContent = scale+' px/unit';
     render();
   });
@@ -377,15 +390,15 @@ x^2 + b*x
     fxArea.value = ''; render();
   });
   document.getElementById('resetView').addEventListener('click', ()=>{
-    scale=40; scaleInput.value='40'; scaleLabel.textContent='40 px/unit'; centerOrigin(); render();
+    scale = 40; scaleInput.value = '40'; scaleLabel.textContent='40 px/unit';
+    centerOrigin(); render();
   });
 
   // Click-to-add points (appends a new (x,y) line to the single box)
-  const clickAdd = document.getElementById('clickAdd');
   c.addEventListener('click', (e)=>{
-    if(!clickAdd.checked) return;
+    if(!document.getElementById('clickAdd').checked) return;
     const rect = c.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
+    const { w, h, dpr } = safeCanvasSize();
     const sx = (e.clientX - rect.left) * dpr;
     const sy = (e.clientY - rect.top) * dpr;
     const x = (sx - origin.x) / scale;
@@ -396,32 +409,42 @@ x^2 + b*x
   });
 
   // live update when typing
-  const autoUpdate = document.getElementById('autoUpdate');
   fxArea.addEventListener('input', ()=>{ if(autoUpdate.checked) render(); });
 
   // interactions
   c.addEventListener('wheel', (e)=>{
     e.preventDefault();
-    const s = Math.sign(e.deltaY);
-    const prev=scale;
-    scale = Math.min(2000, Math.max(5, Math.round(scale * (s>0?0.9:1.1))));
-    if(scale!==prev){ scaleInput.value=String(scale); scaleLabel.textContent=scale+' px/unit'; render(); }
+    const s = Math.sign(e.deltaY) || 1;
+    const prev = scale;
+    const next = clamp(Math.round(prev * (s>0 ? 0.9 : 1.1)), 5, 2000);
+    if(next !== prev){
+      scale = next;
+      scaleInput.value = String(scale);
+      scaleLabel.textContent = scale+' px/unit';
+      render();
+    }
   }, {passive:false});
+
   c.addEventListener('mousedown', (e)=>{ dragging=true; dragStart={ x:e.clientX, y:e.clientY, ox:origin.x, oy:origin.y }; });
-  window.addEventListener('mousemove', (e)=>{ if(!dragging) return; const dpr=window.devicePixelRatio||1; origin.x = dragStart.ox + (e.clientX-dragStart.x)*dpr; origin.y = dragStart.oy + (e.clientY-dragStart.y)*dpr; render(); });
+  window.addEventListener('mousemove', (e)=>{
+    if(!dragging) return;
+    const { dpr } = safeCanvasSize();
+    origin.x = dragStart.ox + (e.clientX - dragStart.x) * dpr;
+    origin.y = dragStart.oy + (e.clientY - dragStart.y) * dpr;
+    render();
+  });
   window.addEventListener('mouseup', ()=>{ dragging=false; });
 
   // resize-aware
-  const ro = new ResizeObserver(()=>render()); ro.observe(c);
+  const ro = new ResizeObserver(()=>{ centerOrigin(); render(); }); ro.observe(c);
 
-  // --- Self tests (added var support tests) ---
+  // --- Self tests (includes variable support) ---
   runBtn.addEventListener('click', runTests);
   function approx(a,b,eps=1e-9){ return Math.abs(a-b) <= eps; }
   function line(msg, ok){ return `${ok?'✅':'❌'} ${msg}`; }
   function runTests(){
     const tests = [];
     try{
-      // Base math
       const f1 = compile('x^2'); tests.push(line('x^2 at x=3 => 9', approx(f1(3),9)));
       const f2 = compile('sin(x)'); tests.push(line('sin(0) => 0', approx(f2(0),0)));
       const f3 = compile('x^3-3*x'); tests.push(line('x^3-3*x at x=2 => 2', approx(f3(2),2)));
@@ -432,7 +455,6 @@ x^2 + b*x
       const f8 = compile('sin(PI/2)'); tests.push(line('sin(PI/2) => 1', approx(f8(0),1)));
       const f9 = compile('ln(E^2)'); tests.push(line('ln(E^2) => 2', approx(f9(0),2)));
 
-      // Variable support
       const fv1 = compile('a*x + 2'); tests.push(line('a*x+2 with a=3, x=4 => 14', approx(fv1(4,{a:3}),14)));
       const fv2 = compile('b^2 + x'); tests.push(line('b^2+x with b=-2, x=1 => 5', approx(fv2(1,{b:-2}),5)));
 
