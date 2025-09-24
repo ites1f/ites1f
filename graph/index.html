@@ -261,7 +261,7 @@
     lines.forEach((line,i)=>{
       try{
         const fn = compile(line.replaceAll('−','-')); if(!fn) return;
-        const color = `hsl(210 0% ${lights[i%lights.length]}%)`; // gray
+        const color = "#22d3ee";  // cyan
         plot(fn, w, h, color);
       }catch(e){ errEl.textContent = String(e.message||e); }
     });
