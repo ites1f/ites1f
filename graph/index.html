@@ -3,62 +3,100 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Math Graph (CSP‑Safe • Live Update • Better Ticks)</title>
+  <title>Graph Calc</title>
   <style>
     :root{ --bg:#0b1220; --panel:#0f172a; --ink:#e5e7eb; --muted:#94a3b8; --accent:#22d3ee; }
     *{ box-sizing:border-box; }
+    html, body { height:100%; }
     body{ margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans; }
-    .wrap{ max-width:1000px; margin:0 auto; padding:24px; display:grid; gap:16px; }
-    .card{ background:color-mix(in oklab, var(--panel) 88%, black 0%); border:1px solid #1f2937; border-radius:16px; }
-    .head{ padding:10px 14px; color:var(--muted); font-size:14px; }
-    textarea{ width:100%; height:120px; background:#0b1220; color:var(--ink); border:1px solid #1f2937; border-radius:12px; padding:12px; resize:vertical; }
+
+    /* Fullscreen canvas */
+    #stage {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+    canvas#c {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Compact control panel (≈ ~1/16 of screen, responsive) */
+    .panel {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      width: min(360px, 24vw);
+      max-width: 92vw;
+      background: color-mix(in oklab, var(--panel) 88%, black 0%);
+      border: 1px solid #1f2937;
+      border-radius: 14px;
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+      box-shadow: 0 6px 24px rgba(0,0,0,.35);
+      backdrop-filter: blur(2px);
+    }
     .row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
-    button{ background:#0f172a; color:var(--ink); border:1px solid #1f2937; padding:8px 12px; border-radius:999px; cursor:pointer; }
+    .muted{ color:var(--muted); font-size:12px; }
+    textarea{
+      width:100%; height:96px;
+      background:#0b1220; color:var(--ink);
+      border:1px solid #1f2937; border-radius:10px; padding:10px; resize:vertical;
+    }
+    input[type="range"]{ width: 160px; }
+    button{
+      background:#0f172a; color:var(--ink);
+      border:1px solid #1f2937; padding:6px 10px;
+      border-radius:999px; cursor:pointer; font-size:13px;
+    }
     button:hover{ background:#111827; }
     .accent{ background:var(--accent); color:#001018; border:none; }
-    canvas{ width:100%; height:480px; display:block; }
-    .muted{ color:var(--muted); font-size:14px; }
-    .err{ color:#fda4af; font-size:14px; }
-    .tests{ font-size:13px; white-space:pre-wrap; background:#0f172a; color:var(--ink); border:1px solid #1f2937; border-radius:12px; padding:12px; }
-    details > summary{ cursor:pointer; }
-    label.toggle{ display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid #1f2937; border-radius:999px; background:#0f172a; }
+    label.toggle{ display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border:1px solid #1f2937; border-radius:999px; background:#0f172a; }
+    .err{ color:#fda4af; font-size:13px; min-height: 1.2em; }
+
+    details > summary{ cursor:pointer; color:var(--muted); font-size:12px; }
+    .tests{ font-size:12px; white-space:pre-wrap; background:#0f172a; color:var(--ink); border:1px solid #1f2937; border-radius:10px; padding:10px; }
   </style>
 </head>
 <body>
-<div class="wrap">
-  <h1 style="margin:0; font-size:22px;">Web Math Graph — CSP‑Safe (no eval)</h1>
 
-  <div class="card" style="padding:16px; display:grid; gap:10px;">
-    <label class="muted">Functions (one per line). Use <code>x</code>, <code>sin</code>, <code>cos</code>, <code>tan</code>, <code>log</code> (<em>ln</em> alias), <code>exp</code>, <code>sqrt</code>, constants <code>PI</code>, <code>E</code>. Powers: <code>^</code>. Examples: <code>x^2</code>, <code>sin(x)</code>, <code>x^3-3*x</code>.</label>
-    <textarea id="fx">x^2
-sin(x)</textarea>
+  <div id="stage">
+    <canvas id="c"></canvas>
+  </div>
+
+  <!-- Compact control panel -->
+  <div class="panel" role="region" aria-label="Graph Controls">
+    <div class="muted">Functions (one per line). Use <code>x</code>, <code>sin</code>, <code>cos</code>, <code>tan</code>, <code>log</code>/<code>ln</code>, <code>exp</code>, <code>sqrt</code>, <code>PI</code>, <code>E</code>. Use <code>^</code> for powers.</div>
+    <textarea id="fx" placeholder="e.g. x^2 or sin(x)"></textarea>
+
     <div class="row">
       <span class="muted">Scale</span>
       <input id="scale" type="range" min="5" max="2000" value="40" />
       <span id="scaleLabel" class="muted">40 px/unit</span>
-      <button id="resetFns">Reset to y=x^2</button>
-      <button id="addSin" class="accent">+ Add sin(x)</button>
-      <button id="resetView">Reset View</button>
-      <button id="runTests">Run self‑tests</button>
-      <label class="toggle"><input type="checkbox" id="autoUpdate" checked /> Auto update</label>
-      <button id="renderNow">Update now</button>
     </div>
+
+    <div class="row">
+      <button id="resetFns">Reset function</button>
+      <button id="resetView">Reset view</button>
+      <label class="toggle"><input type="checkbox" id="autoUpdate" checked /> Auto update</label>
+    </div>
+
     <div id="err" class="err"></div>
-  </div>
 
-  <div class="card">
-    <div class="head">Pan: drag • Zoom: mouse wheel</div>
-    <canvas id="c"></canvas>
+    <details>
+      <summary>Parser self-tests</summary>
+      <div id="testlog" class="tests">(not run yet)</div>
+      <div class="row" style="margin-top:6px;">
+        <button id="runTests" class="accent">Run tests</button>
+      </div>
+    </details>
   </div>
-
-  <details class="card" open>
-    <summary class="head">Parser self‑tests</summary>
-    <div id="testlog" class="tests">(not run yet)</div>
-  </details>
-</div>
 
 <script type="module">
-  // --- Tiny CSP‑safe math parser: shunting‑yard to RPN, then evaluate ---
+  // --- CSP-safe math parser (shunting-yard -> RPN -> eval) ---
   const OPS = {
     '+': {p:1, a:'L', f:(a,b)=>a+b},
     '-': {p:1, a:'L', f:(a,b)=>a-b},
@@ -111,7 +149,6 @@ sin(x)</textarea>
         if(!stack.length) throw new Error('Unexpected comma');
       }
       else if(t.type in OPS){
-        // unary minus -> convert to (0 - expr)
         if(t.type==='-' && (prev==null || (prev.type in OPS) || prev.type==='(' || prev.type===',')){
           out.push({type:'num', v:0});
         }
@@ -154,7 +191,7 @@ sin(x)</textarea>
     }
   }
 
-  // --- UI + plotting (using compile()) ---
+  // --- UI + plotting ---
   const c = document.getElementById('c');
   const ctx = c.getContext('2d');
   const fxArea = document.getElementById('fx');
@@ -162,6 +199,8 @@ sin(x)</textarea>
   const scaleLabel = document.getElementById('scaleLabel');
   const errEl = document.getElementById('err');
   const autoUpdate = document.getElementById('autoUpdate');
+  const runBtn = document.getElementById('runTests');
+  const testlog = document.getElementById('testlog');
 
   let scale = 40; // px per unit
   let origin = { x: 0, y: 0 };
@@ -173,9 +212,7 @@ sin(x)</textarea>
     let nice = base >= 5 ? 5 : base >= 2 ? 2 : 1;
     return nice * 10 ** exp;
   }
-
   function formatTick(value, step){
-    // Determine decimals based on step size; cap to 8 decimals
     const d = Math.max(0, Math.min(8, -Math.floor(Math.log10(step))+1));
     const s = value.toFixed(d);
     return s.replace(/\.0+$/,'').replace(/(\.\d*?)0+$/,'$1');
@@ -197,7 +234,7 @@ sin(x)</textarea>
     ctx.strokeStyle = '#94a3b8';
     ctx.beginPath(); ctx.moveTo(0,origin.y); ctx.lineTo(w,origin.y); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(origin.x,0); ctx.lineTo(origin.x,h); ctx.stroke();
-    // tick labels (rounded)
+    // tick labels
     ctx.fillStyle = '#94a3b8'; ctx.font = '12px system-ui';
     const xStepL = xStep, yStepL = yStep;
     for(let x = Math.ceil(-origin.x/scale/xStepL)*xStepL; x < (w-origin.x)/scale; x+=xStepL){
@@ -250,10 +287,10 @@ sin(x)</textarea>
     scaleLabel.textContent = scale+' px/unit';
     render();
   });
-  document.getElementById('resetFns').addEventListener('click', ()=>{ fxArea.value = 'x^2'; render(); });
-  document.getElementById('addSin').addEventListener('click', ()=>{ fxArea.value += (fxArea.value.endsWith('\n')?'':'\n') + 'sin(x)'; render(); });
-  document.getElementById('resetView').addEventListener('click', ()=>{ scale=40; scaleInput.value='40'; scaleLabel.textContent='40 px/unit'; centerOrigin(); render(); });
-  document.getElementById('renderNow').addEventListener('click', render);
+  document.getElementById('resetFns').addEventListener('click', ()=>{ fxArea.value = ''; render(); });
+  document.getElementById('resetView').addEventListener('click', ()=>{
+    scale=40; scaleInput.value='40'; scaleLabel.textContent='40 px/unit'; centerOrigin(); render();
+  });
 
   // live update toggle
   fxArea.addEventListener('input', ()=>{ if(autoUpdate.checked) render(); });
@@ -263,7 +300,6 @@ sin(x)</textarea>
     e.preventDefault();
     const s = Math.sign(e.deltaY);
     const prev=scale;
-    // extended zoom range
     scale = Math.min(2000, Math.max(5, scale * (s>0?0.9:1.1)));
     if(scale!==prev){ scaleInput.value=String(Math.round(scale)); scaleLabel.textContent=scale+' px/unit'; render(); }
   }, {passive:false});
@@ -275,12 +311,9 @@ sin(x)</textarea>
   const ro = new ResizeObserver(()=>render()); ro.observe(c);
 
   // --- Self tests ---
-  const testlog = document.getElementById('testlog');
-  document.getElementById('runTests').addEventListener('click', runTests);
-
+  runBtn.addEventListener('click', runTests);
   function approx(a,b,eps=1e-9){ return Math.abs(a-b) <= eps; }
   function line(msg, ok){ return `${ok?'✅':'❌'} ${msg}`; }
-
   function runTests(){
     const tests = [];
     try{
@@ -298,9 +331,8 @@ sin(x)</textarea>
     }catch(e){ testlog.textContent = 'Test crashed: '+(e?.message||e); }
   }
 
-  // initial render + tests
+  // initial paint (blank graph, no functions)
   render();
-  runTests();
 </script>
 </body>
 </html>
