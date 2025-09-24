@@ -7,25 +7,19 @@
   <style>
     /* Pure monochrome theme */
     :root{
-      --bg:#0a0a0a;        /* page/canvas background */
-      --panel:#141414;     /* control panel bg */
-      --ink:#e6e6e6;       /* primary text */
-      --muted:#a3a3a3;     /* secondary text */
-      --border:#2a2a2a;    /* panel/border lines */
-      --ctl:#0f0f0f;       /* input/button bg */
-      --ctl-hover:#1a1a1a; /* hover */
+      --bg:#0a0a0a;        --panel:#141414;  --ink:#e6e6e6;
+      --muted:#a3a3a3;     --border:#2a2a2a; --ctl:#0f0f0f; --ctl-hover:#1a1a1a;
     }
-    *{ box-sizing:border-box; }
-    html, body { height:100%; }
+    *{ box-sizing:border-box; } html, body { height:100%; }
     body{ margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans; }
 
     /* Fullscreen canvas */
     #stage { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
     canvas#c { width: 100%; height: 100%; display: block; }
 
-    /* Compact control panel (~1/16 screen, responsive) */
+    /* Compact control panel (~1/16 screen, bottom-left) */
     .panel {
-      position: fixed; left: 16px; bottom: 16px;
+      position: fixed; left: 16px; bottom: 16px; right: auto;
       width: min(360px, 24vw); max-width: 92vw;
       background: var(--panel);
       border: 1px solid var(--border); border-radius: 14px; padding: 12px;
@@ -50,7 +44,7 @@
       display:inline-flex; align-items:center; gap:6px; padding:4px 8px;
       border:1px solid var(--border); border-radius:999px; background:var(--ctl);
     }
-    .err{ color:#d4d4d4; font-size:13px; min-height: 1.2em; }  /* grayscale errors */
+    .err{ color:#d4d4d4; font-size:13px; min-height: 1.2em; }
 
     details > summary{ cursor:pointer; color:var(--muted); font-size:12px; }
     .tests{
@@ -66,17 +60,35 @@
 
   <!-- Compact control panel -->
   <div class="panel" role="region" aria-label="Graph Controls">
-    <div class="muted">Functions (one per line). Use <code>x</code>, <code>sin</code>, <code>cos</code>, <code>tan</code>, <code>log</code>/<code>ln</code>, <code>exp</code>, <code>sqrt</code>, <code>PI</code>, <code>E</code>. Use <code>^</code> for powers.</div>
-    <textarea id="fx" placeholder="e.g. x^2 or sin(x)"></textarea>
+    <div class="muted">
+      Functions (one per line). Use <code>x</code>, <code>a</code> (parameter), <code>sin</code>, <code>cos</code>, <code>tan</code>, <code>log/ln</code>, <code>exp</code>, <code>sqrt</code>, <code>PI</code>, <code>E</code>. Powers: <code>^</code>.
+    </div>
+    <textarea id="fx" placeholder="e.g. a*sin(x)\n(x^2) + a*x"></textarea>
 
+    <!-- Parameter a -->
+    <div class="row">
+      <span class="muted">a</span>
+      <input id="paramA" type="range" min="-10" max="10" value="1" step="0.1" />
+      <span id="paramALabel" class="muted">1.0</span>
+    </div>
+
+    <!-- Scale -->
     <div class="row">
       <span class="muted">Scale</span>
       <input id="scale" type="range" min="5" max="2000" value="40" step="1" />
       <span id="scaleLabel" class="muted">40 px/unit</span>
     </div>
 
+    <!-- Points -->
+    <div class="muted">Points (one per line, formats: <code>x,y</code> or <code>(x,y)</code>)</div>
+    <textarea id="points" placeholder="e.g.\n1,2\n-3,0.5"></textarea>
     <div class="row">
-      <button id="resetFns">Clear</button>
+      <label class="toggle"><input type="checkbox" id="clickAdd" /> Click to add points</label>
+      <button id="clearPts">Clear points</button>
+    </div>
+
+    <div class="row">
+      <button id="resetFns">Clear functions</button>
       <button id="resetView">Reset view</button>
       <label class="toggle"><input type="checkbox" id="autoUpdate" checked /> Auto update</label>
     </div>
@@ -122,7 +134,8 @@
       if(isAlpha(c)){
         let j=i+1; while(j<s.length && /[a-zA-Z0-9_]/.test(s[j])) j++;
         const name=s.slice(i,j);
-        if(name==='x') tokens.push({type:'var'});
+        if(name==='x') tokens.push({type:'var', v:'x'});
+        else if(name==='a') tokens.push({type:'var', v:'a'});        // allow 'a' as a variable token
         else if(FUN[name]) tokens.push({type:'fun', v:name});
         else if(CONSTS[name]!==undefined) tokens.push({type:'num', v:CONSTS[name]});
         else throw new Error('Unknown token: '+name);
@@ -171,13 +184,18 @@
     return out;
   }
 
+  // compile now returns a function of (x, env) so we can pass a
   function compile(expr){
     const rpn = toRPN(tokenize(expr));
-    return function(x){
+    return function(x, env){
       const st=[];
       for(const t of rpn){
         if(t.type==='num') st.push(t.v);
-        else if(t.type==='var') st.push(x);
+        else if(t.type==='var'){
+          if(t.v==='x') st.push(x);
+          else if(t.v==='a') st.push(env?.a ?? 0);  // default a=0 if missing
+          else throw new Error('Unknown variable: '+t.v);
+        }
         else if(t.type in OPS){ const b=st.pop(), a=st.pop(); st.push(OPS[t.type].f(a,b)); }
         else if(t.type==='fun'){ const a=st.pop(); st.push(FUN[t.v](a)); }
         else throw new Error('Bad RPN token');
@@ -197,6 +215,11 @@
   const autoUpdate = document.getElementById('autoUpdate');
   const runBtn = document.getElementById('runTests');
   const testlog = document.getElementById('testlog');
+  const paramA = document.getElementById('paramA');
+  const paramALabel = document.getElementById('paramALabel');
+  const pointsArea = document.getElementById('points');
+  const clickAdd = document.getElementById('clickAdd');
+  const clearPts = document.getElementById('clearPts');
 
   let scale = 40;            // px per unit (same for X and Y)
   let origin = { x: 0, y: 0 };
@@ -219,8 +242,7 @@
     ctx.lineWidth = 1;
 
     // ONE common world step → square grid cells
-    const xSpan = w / scale;   // world units horizontally
-    const ySpan = h / scale;   // world units vertically
+    const xSpan = w / scale, ySpan = h / scale;
     const step  = niceStep(Math.min(xSpan, ySpan) / 10);
 
     // Grid (pure gray)
@@ -247,16 +269,43 @@
     }
   }
 
-  function plot(fn, w, h, color){
+  function plot(fn, w, h, color, env){
     ctx.lineWidth = 2; ctx.strokeStyle = color; ctx.beginPath();
     const step = 1/scale; let first=true;
     const xMin = -origin.x/scale, xMax = (w-origin.x)/scale;
     for(let x=xMin; x<=xMax; x+=step){
-      let y = fn(x); if(!Number.isFinite(y)){ first=true; continue; }
+      let y = fn(x, env); if(!Number.isFinite(y)){ first=true; continue; }
       const sx = origin.x + x*scale; const sy = origin.y - y*scale;
       if(first){ ctx.moveTo(sx,sy); first=false; } else { ctx.lineTo(sx,sy); }
     }
     ctx.stroke();
+  }
+
+  function parsePoints(text){
+    const pts=[];
+    const lines = text.split('\n').map(s=>s.trim()).filter(Boolean);
+    for(const line of lines){
+      // Accept: "x,y" OR "(x,y)" OR "x y"
+      const m = line.match(/^\(?\s*([+-]?\d*\.?\d+(?:e[+-]?\d+)?)\s*[, ]\s*([+-]?\d*\.?\d+(?:e[+-]?\d+)?)\s*\)?$/i);
+      if(m){
+        pts.push({x:parseFloat(m[1]), y:parseFloat(m[2])});
+      }
+    }
+    return pts;
+  }
+
+  function drawPoints(w,h, pts){
+    ctx.lineWidth = 1.5;
+    for(const p of pts){
+      const sx = origin.x + p.x*scale;
+      const sy = origin.y - p.y*scale;
+      // small circle
+      ctx.beginPath();
+      ctx.arc(sx, sy, Math.max(2, 4), 0, Math.PI*2);
+      ctx.fillStyle = '#e6e6e6';
+      ctx.strokeStyle = '#6b6b6b';
+      ctx.fill(); ctx.stroke();
+    }
   }
 
   function render(){
@@ -264,24 +313,29 @@
     const w = c.clientWidth * dpr, h = c.clientHeight * dpr;
     if (c.width!==w || c.height!==h){ c.width=w; c.height=h; }
 
-    // Background (pure gray/black)
-    ctx.fillStyle = '#0a0a0a';
-    ctx.fillRect(0,0,w,h);
+    // Background
+    ctx.fillStyle = '#0a0a0a'; ctx.fillRect(0,0,w,h);
 
     // Grid & axes
     drawGridAxes(w,h);
 
     // Functions — rainbow (comma-style HSL for canvas compatibility)
     errEl.textContent = '';
+    const aVal = parseFloat(paramA.value);
+    const env = { a: aVal };
     const lines = fxArea.value.split('\n').map(s=>s.trim()).filter(Boolean);
-    const hues = [0,30,60,120,180,210,240,270,300];  // rainbow wheel
+    const hues = [0,30,60,120,180,210,240,270,300];
     lines.forEach((line,i)=>{
       try{
         const fn = compile(line.replaceAll('−','-')); if(!fn) return;
-        const color = `hsl(${hues[i % hues.length]}, 75%, 55%)`; // bright rainbow lines
-        plot(fn, w, h, color);
+        const color = `hsl(${hues[i % hues.length]}, 75%, 55%)`;
+        plot(fn, w, h, color, env);
       }catch(e){ errEl.textContent = String(e.message||e); }
     });
+
+    // Points
+    const pts = parsePoints(pointsArea.value);
+    drawPoints(w,h, pts);
   }
 
   // center origin initially
@@ -293,26 +347,51 @@
 
   // UI bindings
   scaleInput.addEventListener('input', ()=>{
-    scale = parseInt(scaleInput.value,10);             // integer zoom
+    scale = parseInt(scaleInput.value,10);
     scaleLabel.textContent = scale+' px/unit';
     render();
   });
+
+  // parameter a
+  paramA.addEventListener('input', ()=>{
+    paramALabel.textContent = parseFloat(paramA.value).toFixed(1);
+    if(autoUpdate.checked) render();
+  });
+
   document.getElementById('resetFns').addEventListener('click', ()=>{
-    fxArea.value = ''; render();                       // starts blank
+    fxArea.value = ''; render();
   });
   document.getElementById('resetView').addEventListener('click', ()=>{
     scale=40; scaleInput.value='40'; scaleLabel.textContent='40 px/unit'; centerOrigin(); render();
   });
 
-  // live update toggle
+  // Points: clear, and click-to-add
+  clearPts.addEventListener('click', ()=>{ pointsArea.value=''; render(); });
+
+  c.addEventListener('click', (e)=>{
+    if(!clickAdd.checked) return;
+    // Convert screen → world
+    const rect = c.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const sx = (e.clientX - rect.left) * dpr;
+    const sy = (e.clientY - rect.top) * dpr;
+    const x = (sx - origin.x) / scale;
+    const y = (origin.y - sy) / scale;
+    const line = `${x.toFixed(3)},${y.toFixed(3)}`;
+    pointsArea.value += (pointsArea.value.trim() ? '\n' : '') + line;
+    render();
+  });
+
+  // live update when typing
   fxArea.addEventListener('input', ()=>{ if(autoUpdate.checked) render(); });
+  pointsArea.addEventListener('input', ()=>{ if(autoUpdate.checked) render(); });
 
   // interactions
   c.addEventListener('wheel', (e)=>{
     e.preventDefault();
     const s = Math.sign(e.deltaY);
     const prev=scale;
-    scale = Math.min(2000, Math.max(5, Math.round(scale * (s>0?0.9:1.1)))); // keep integer
+    scale = Math.min(2000, Math.max(5, Math.round(scale * (s>0?0.9:1.1))));
     if(scale!==prev){ scaleInput.value=String(scale); scaleLabel.textContent=scale+' px/unit'; render(); }
   }, {passive:false});
   c.addEventListener('mousedown', (e)=>{ dragging=true; dragStart={ x:e.clientX, y:e.clientY, ox:origin.x, oy:origin.y }; });
@@ -322,7 +401,7 @@
   // resize-aware
   const ro = new ResizeObserver(()=>render()); ro.observe(c);
 
-  // --- Self tests (kept for sanity) ---
+  // --- Self tests (unchanged) ---
   runBtn.addEventListener('click', runTests);
   function approx(a,b,eps=1e-9){ return Math.abs(a-b) <= eps; }
   function line(msg, ok){ return `${ok?'✅':'❌'} ${msg}`; }
