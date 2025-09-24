@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Math Graph</title>
+  <style>
+    :root{ --bg:#0b1220; --panel:#0f172a; --ink:#e5e7eb; --muted:#94a3b8; --accent:#22d3ee; }
+    *{ box-sizing:border-box; }
+    body{ margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans; }
+    .wrap{ max-width:1000px; margin:0 auto; padding:24px; display:grid; gap:16px; }
+    .card{ background:color-mix(in oklab, var(--panel) 88%, black 0%); border:1px solid #1f2937; border-radius:16px; }
+    .head{ padding:10px 14px; color:var(--muted); font-size:14px; }
+    textarea{ width:100%; height:120px; background:#0b1220; color:var(--ink); border:1px solid #1f2937; border-radius:12px; padding:12px; resize:vertical; }
+    .row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    button{ background:#0f172a; color:var(--ink); border:1px solid #1f2937; padding:8px 12px; border-radius:999px; cursor:pointer; }
+    button:hover{ background:#111827; }
+    .accent{ background:var(--accent); color:#001018; border:none; }
+    canvas{ width:100%; height:480px; display:block; }
+    .muted{ color:var(--muted); font-size:14px; }
+    .err{ color:#fda4af; font-size:14px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1 style="margin:0; font-size:22px;">Web Math Graph</h1>
+
+  <div class="card" style="padding:16px; display:grid; gap:10px;">
+    <label class="muted">Functions (one per line). Use <code>x</code>, <code>sin</code>, <code>cos</code>, <code>exp</code>, <code>PI</code>. You can type <code>^</code> for powers.</label>
+    <textarea id="fx">x^2
+sin(x)</textarea>
+    <div class="row">
+      <span class="muted">Scale</span>
+      <input id="scale" type="range" min="10" max="400" value="40" />
+      <span id="scaleLabel" class="muted">40 px/unit</span>
+      <button id="resetFns">Reset to y=x^2</button>
+      <button id="addSin" class="accent">+ Add sin(x)</button>
+      <button id="resetView">Reset View</button>
+    </div>
+    <div id="err" class="err"></div>
+  </div>
+
+  <div class="card">
+    <div class="head">Pan: drag • Zoom: mouse wheel</div>
+    <canvas id="c"></canvas>
+  </div>
+</div>
+
+<script type="module">
+  const c = document.getElementById('c');
+  const ctx = c.getContext('2d');
+  const fxArea = document.getElementById('fx');
+  const scaleInput = document.getElementById('scale');
+  const scaleLabel = document.getElementById('scaleLabel');
+  const errEl = document.getElementById('err');
+  const resetFnsBtn = document.getElementById('resetFns');
+  const addSinBtn = document.getElementById('addSin');
+  const resetViewBtn = document.getElementById('resetView');
+
+  let scale = 40; // px per unit
+  let origin = { x: 0, y: 0 };
+  let dragging = false; let dragStart = { x:0, y:0, ox:0, oy:0 };
+
+  function niceStep(target){
+    const exp = Math.floor(Math.log10(target));
+    const base = target / 10 ** exp;
+    let nice = base >= 5 ? 5 : base >= 2 ? 2 : 1;
+    return nice * 10 ** exp;
+  }
+
+  // Safe-ish function builder (x + Math only)
+  function makeFn(expr){
+    const js = expr.replaceAll('^','**').replaceAll(' ','');
+    if (!js) return null;
+    if (/new\\s|constructor|Function|=>|import|export|while|for\\s*\\(|eval|window|document|\\[|\\{|`/.test(js))
+      throw new Error('Unsupported tokens in expression.');
+    // eslint-disable-next-line no-new-func
+    const f = new Function('x', 'with(Math){ return ('+js+') }');
+    f(0); // probe
+    return f;
+  }
+
+  function drawGridAxes(w,h){
+    ctx.lineWidth = 1;
+    // grid
+    ctx.strokeStyle = '#1f2937';
+    const xStep = niceStep(w/scale/10);
+    for(let x = Math.ceil(-origin.x/scale/xStep)*xStep; x < (w-origin.x)/scale; x+=xStep){
+      const sx = origin.x + x*scale; ctx.beginPath(); ctx.moveTo(sx,0); ctx.lineTo(sx,h); ctx.stroke();
+    }
+    const yStep = niceStep(h/scale/10);
+    for(let y = Math.ceil((origin.y-h)/scale/yStep)*yStep; y < origin.y/scale; y+=yStep){
+      const sy = origin.y - y*scale; ctx.beginPath(); ctx.moveTo(0,sy); ctx.lineTo(w,sy); ctx.stroke();
+    }
+    // axes
+    ctx.strokeStyle = '#94a3b8';
+    ctx.beginPath(); ctx.moveTo(0,origin.y); ctx.lineTo(w,origin.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(origin.x,0); ctx.lineTo(origin.x,h); ctx.stroke();
+    // tick labels
+    ctx.fillStyle = '#94a3b8'; ctx.font = '12px system-ui';
+    for(let x = Math.ceil(-origin.x/scale/xStep)*xStep; x < (w-origin.x)/scale; x+=xStep){
+      if (Math.abs(x) < 1e-9) continue; const sx = origin.x + x*scale; ctx.fillText(String(x), sx+2, origin.y+12);
+    }
+    for(let y = Math.ceil((origin.y-h)/scale/yStep)*yStep; y < origin.y/scale; y+=yStep){
+      if (Math.abs(y) < 1e-9) continue; const sy = origin.y - y*scale; ctx.fillText(String(y), origin.x+6, sy-2);
+    }
+  }
+
+  function plot(fn, w, h, color){
+    ctx.lineWidth = 2; ctx.strokeStyle = color; ctx.beginPath();
+    const step = 1/scale; let first=true;
+    const xMin = -origin.x/scale, xMax = (w-origin.x)/scale;
+    for(let x=xMin; x<=xMax; x+=step){
+      let y = fn(x); if(!Number.isFinite(y)){ first=true; continue; }
+      const sx = origin.x + x*scale; const sy = origin.y - y*scale;
+      if(first){ ctx.moveTo(sx,sy); first=false; } else { ctx.lineTo(sx,sy); }
+    }
+    ctx.stroke();
+  }
+
+  function render(){
+    const dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth * dpr, h = c.clientHeight * dpr;
+    if (c.width!==w || c.height!==h){ c.width=w; c.height=h; }
+    ctx.fillStyle = '#0b1220'; ctx.fillRect(0,0,w,h);
+    drawGridAxes(w,h);
+    errEl.textContent = '';
+    const lines = fxArea.value.split('\n').map(s=>s.trim()).filter(Boolean);
+    const hues = [190,160,120,60,20,300,260,0];
+    lines.forEach((line,i)=>{
+      try{ const fn = makeFn(line); if(!fn) return;
+        const color = `hsl(${hues[i%hues.length]} 80% 60%)`;
+        plot(fn, w, h, color);
+      }catch(e){ errEl.textContent = String(e.message||e); }
+    });
+  }
+
+  // center origin initially
+  function centerOrigin(){
+    const dpr = window.devicePixelRatio || 1;
+    origin.x = (c.clientWidth * dpr)/2; origin.y = (c.clientHeight * dpr)/2;
+  }
+  centerOrigin();
+
+  // UI bindings
+  scaleInput.addEventListener('input', ()=>{
+    scale = parseInt(scaleInput.value,10);
+    scaleLabel.textContent = scale+' px/unit';
+    render();
+  });
+  resetFnsBtn.addEventListener('click', ()=>{ fxArea.value = 'x^2'; render(); });
+  addSinBtn.addEventListener('click', ()=>{ fxArea.value += (fxArea.value.endsWith('\n')?'':'\n') + 'sin(x)'; render(); });
+  resetViewBtn.addEventListener('click', ()=>{ scale=40; scaleInput.value='40'; scaleLabel.textContent='40 px/unit'; centerOrigin(); render(); });
+
+  // interactions
+  c.addEventListener('wheel', (e)=>{
+    e.preventDefault();
+    const s = Math.sign(e.deltaY);
+    const prev=scale;
+    scale = Math.min(400, Math.max(10, scale * (s>0?0.9:1.1)));
+    if(scale!==prev){ scaleInput.value=String(Math.round(scale)); scaleLabel.textContent=scale+' px/unit'; render(); }
+  }, {passive:false});
+  c.addEventListener('mousedown', (e)=>{ dragging=true; dragStart={ x:e.clientX, y:e.clientY, ox:origin.x, oy:origin.y }; });
+  window.addEventListener('mousemove', (e)=>{ if(!dragging) return; const dpr=window.devicePixelRatio||1; origin.x = dragStart.ox + (e.clientX-dragStart.x)*dpr; origin.y = dragStart.oy + (e.clientY-dragStart.y)*dpr; render(); });
+  window.addEventListener('mouseup', ()=>{ dragging=false; });
+
+  // resize-aware
+  const ro = new ResizeObserver(()=>render()); ro.observe(c);
+
+  render();
+</script>
+</body>
+</html>
