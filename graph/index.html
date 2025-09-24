@@ -29,7 +29,7 @@
     .row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
     .muted{ color:var(--muted); font-size:12px; }
     textarea{
-      width:100%; height:96px;
+      width:100%; height:140px;
       background:var(--ctl); color:var(--ink);
       border:1px solid var(--border); border-radius:10px; padding:10px; resize:vertical;
     }
@@ -61,16 +61,15 @@
   <!-- Compact control panel -->
   <div class="panel" role="region" aria-label="Graph Controls">
     <div class="muted">
-      Functions (one per line). Use <code>x</code>, <code>a</code> (parameter), <code>sin</code>, <code>cos</code>, <code>tan</code>, <code>log/ln</code>, <code>exp</code>, <code>sqrt</code>, <code>PI</code>, <code>E</code>. Powers: <code>^</code>.
+      In one box: define <b>variables</b> (<code>a = 16</code>), <b>points</b> (<code>(1,2)</code> or <code>1,2</code>), and <b>functions of x</b> (<code>a*sin(x)</code>, <code>x^2 + b*x</code>). Powers: <code>^</code>. Built-ins: <code>sin, cos, tan, log/ln, exp, sqrt, abs, floor, ceil, round, PI, E</code>.
     </div>
-    <textarea id="fx" placeholder="e.g. a*sin(x)\n(x^2) + a*x"></textarea>
-
-    <!-- Parameter a -->
-    <div class="row">
-      <span class="muted">a</span>
-      <input id="paramA" type="range" min="-10" max="10" value="1" step="0.1" />
-      <span id="paramALabel" class="muted">1.0</span>
-    </div>
+    <textarea id="fx" placeholder="Examples:
+a = 1.5
+b = -2
+a*sin(x)
+x^2 + b*x
+(1, 2.5)
+-3, 0.5"></textarea>
 
     <!-- Scale -->
     <div class="row">
@@ -79,16 +78,13 @@
       <span id="scaleLabel" class="muted">40 px/unit</span>
     </div>
 
-    <!-- Points -->
-    <div class="muted">Points (one per line, formats: <code>x,y</code> or <code>(x,y)</code>)</div>
-    <textarea id="points" placeholder="e.g.\n1,2\n-3,0.5"></textarea>
+    <!-- Click-to-add points -->
     <div class="row">
-      <label class="toggle"><input type="checkbox" id="clickAdd" /> Click to add points</label>
-      <button id="clearPts">Clear points</button>
+      <label class="toggle"><input type="checkbox" id="clickAdd" /> Click canvas to add (x,y)</label>
     </div>
 
     <div class="row">
-      <button id="resetFns">Clear functions</button>
+      <button id="resetFns">Clear box</button>
       <button id="resetView">Reset view</button>
       <label class="toggle"><input type="checkbox" id="autoUpdate" checked /> Auto update</label>
     </div>
@@ -135,10 +131,9 @@
         let j=i+1; while(j<s.length && /[a-zA-Z0-9_]/.test(s[j])) j++;
         const name=s.slice(i,j);
         if(name==='x') tokens.push({type:'var', v:'x'});
-        else if(name==='a') tokens.push({type:'var', v:'a'});        // allow 'a' as a variable token
         else if(FUN[name]) tokens.push({type:'fun', v:name});
         else if(CONSTS[name]!==undefined) tokens.push({type:'num', v:CONSTS[name]});
-        else throw new Error('Unknown token: '+name);
+        else tokens.push({type:'var', v:name}); // generic variable name
         i=j; continue;
       }
       if('+-*/^(),'.includes(c)){ tokens.push({type:c}); i++; continue; }
@@ -184,17 +179,17 @@
     return out;
   }
 
-  // compile now returns a function of (x, env) so we can pass a
+  // compile returns a function (x, env) => number  (env holds user variables)
   function compile(expr){
     const rpn = toRPN(tokenize(expr));
-    return function(x, env){
+    return function(x, env = {}){
       const st=[];
       for(const t of rpn){
         if(t.type==='num') st.push(t.v);
         else if(t.type==='var'){
           if(t.v==='x') st.push(x);
-          else if(t.v==='a') st.push(env?.a ?? 0);  // default a=0 if missing
-          else throw new Error('Unknown variable: '+t.v);
+          else if(Object.prototype.hasOwnProperty.call(env, t.v)) st.push(env[t.v]);
+          else throw new Error('Undefined variable: '+t.v);
         }
         else if(t.type in OPS){ const b=st.pop(), a=st.pop(); st.push(OPS[t.type].f(a,b)); }
         else if(t.type==='fun'){ const a=st.pop(); st.push(FUN[t.v](a)); }
@@ -215,11 +210,7 @@
   const autoUpdate = document.getElementById('autoUpdate');
   const runBtn = document.getElementById('runTests');
   const testlog = document.getElementById('testlog');
-  const paramA = document.getElementById('paramA');
-  const paramALabel = document.getElementById('paramALabel');
-  const pointsArea = document.getElementById('points');
   const clickAdd = document.getElementById('clickAdd');
-  const clearPts = document.getElementById('clearPts');
 
   let scale = 40;            // px per unit (same for X and Y)
   let origin = { x: 0, y: 0 };
@@ -281,17 +272,32 @@
     ctx.stroke();
   }
 
-  function parsePoints(text){
-    const pts=[];
+  // Split the single text area into vars + functions + points
+  function splitBox(text){
+    const fns = [];
+    const pts = [];
+    const vars = {};
     const lines = text.split('\n').map(s=>s.trim()).filter(Boolean);
-    for(const line of lines){
-      // Accept: "x,y" OR "(x,y)" OR "x y"
-      const m = line.match(/^\(?\s*([+-]?\d*\.?\d+(?:e[+-]?\d+)?)\s*[, ]\s*([+-]?\d*\.?\d+(?:e[+-]?\d+)?)\s*\)?$/i);
-      if(m){
-        pts.push({x:parseFloat(m[1]), y:parseFloat(m[2])});
-      }
+
+    // variable assignment: name = number (scientific notation allowed)
+    const varRe = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([+-]?\d*\.?\d+(?:e[+-]?\d+)?)$/i;
+    // point: (x,y) or x,y
+    const ptRe  = /^\(?\s*([+-]?\d*\.?\d+(?:e[+-]?\d+)?)\s*,\s*([+-]?\d*\.?\d+(?:e[+-]?\d+)?)\s*\)?$/i;
+    // ignore harmless “name(x)=” prefix before an expression
+    const defHead = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\s*x\s*\)\s*=\s*/i;
+
+    for(let raw of lines){
+      const line = raw.replace(defHead,''); // drop `f(x)=` style prefixes
+
+      const mv = varRe.exec(line);
+      if(mv){ vars[mv[1]] = parseFloat(mv[2]); continue; }
+
+      const mp = ptRe.exec(line);
+      if(mp){ pts.push({ x:parseFloat(mp[1]), y:parseFloat(mp[2]) }); continue; }
+
+      fns.push(line);
     }
-    return pts;
+    return { fns, pts, vars };
   }
 
   function drawPoints(w,h, pts){
@@ -299,7 +305,6 @@
     for(const p of pts){
       const sx = origin.x + p.x*scale;
       const sy = origin.y - p.y*scale;
-      // small circle
       ctx.beginPath();
       ctx.arc(sx, sy, Math.max(2, 4), 0, Math.PI*2);
       ctx.fillStyle = '#e6e6e6';
@@ -319,22 +324,21 @@
     // Grid & axes
     drawGridAxes(w,h);
 
-    // Functions — rainbow (comma-style HSL for canvas compatibility)
+    // Read box → vars, functions, points
     errEl.textContent = '';
-    const aVal = parseFloat(paramA.value);
-    const env = { a: aVal };
-    const lines = fxArea.value.split('\n').map(s=>s.trim()).filter(Boolean);
+    const { fns, pts, vars } = splitBox(fxArea.value);
+
+    // Draw functions (rainbow)
     const hues = [0,30,60,120,180,210,240,270,300];
-    lines.forEach((line,i)=>{
+    fns.forEach((line,i)=>{
       try{
         const fn = compile(line.replaceAll('−','-')); if(!fn) return;
         const color = `hsl(${hues[i % hues.length]}, 75%, 55%)`;
-        plot(fn, w, h, color, env);
+        plot(fn, w, h, color, vars);
       }catch(e){ errEl.textContent = String(e.message||e); }
     });
 
-    // Points
-    const pts = parsePoints(pointsArea.value);
+    // Draw points
     drawPoints(w,h, pts);
   }
 
@@ -346,16 +350,12 @@
   centerOrigin();
 
   // UI bindings
+  const scaleInput = document.getElementById('scale');
+  const scaleLabel = document.getElementById('scaleLabel');
   scaleInput.addEventListener('input', ()=>{
     scale = parseInt(scaleInput.value,10);
     scaleLabel.textContent = scale+' px/unit';
     render();
-  });
-
-  // parameter a
-  paramA.addEventListener('input', ()=>{
-    paramALabel.textContent = parseFloat(paramA.value).toFixed(1);
-    if(autoUpdate.checked) render();
   });
 
   document.getElementById('resetFns').addEventListener('click', ()=>{
@@ -365,26 +365,24 @@
     scale=40; scaleInput.value='40'; scaleLabel.textContent='40 px/unit'; centerOrigin(); render();
   });
 
-  // Points: clear, and click-to-add
-  clearPts.addEventListener('click', ()=>{ pointsArea.value=''; render(); });
-
+  // Click-to-add points (appends a new (x,y) line to the single box)
+  const clickAdd = document.getElementById('clickAdd');
   c.addEventListener('click', (e)=>{
     if(!clickAdd.checked) return;
-    // Convert screen → world
     const rect = c.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     const sx = (e.clientX - rect.left) * dpr;
     const sy = (e.clientY - rect.top) * dpr;
     const x = (sx - origin.x) / scale;
     const y = (origin.y - sy) / scale;
-    const line = `${x.toFixed(3)},${y.toFixed(3)}`;
-    pointsArea.value += (pointsArea.value.trim() ? '\n' : '') + line;
+    const line = `(${x.toFixed(3)},${y.toFixed(3)})`;
+    fxArea.value += (fxArea.value.trim() ? '\n' : '') + line;
     render();
   });
 
   // live update when typing
+  const autoUpdate = document.getElementById('autoUpdate');
   fxArea.addEventListener('input', ()=>{ if(autoUpdate.checked) render(); });
-  pointsArea.addEventListener('input', ()=>{ if(autoUpdate.checked) render(); });
 
   // interactions
   c.addEventListener('wheel', (e)=>{
@@ -401,13 +399,14 @@
   // resize-aware
   const ro = new ResizeObserver(()=>render()); ro.observe(c);
 
-  // --- Self tests (unchanged) ---
+  // --- Self tests (added var support tests) ---
   runBtn.addEventListener('click', runTests);
   function approx(a,b,eps=1e-9){ return Math.abs(a-b) <= eps; }
   function line(msg, ok){ return `${ok?'✅':'❌'} ${msg}`; }
   function runTests(){
     const tests = [];
     try{
+      // Base math
       const f1 = compile('x^2'); tests.push(line('x^2 at x=3 => 9', approx(f1(3),9)));
       const f2 = compile('sin(x)'); tests.push(line('sin(0) => 0', approx(f2(0),0)));
       const f3 = compile('x^3-3*x'); tests.push(line('x^3-3*x at x=2 => 2', approx(f3(2),2)));
@@ -417,6 +416,10 @@
       const f7 = compile('-x'); tests.push(line('unary minus: -x at x=5 => -5', approx(f7(5),-5)));
       const f8 = compile('sin(PI/2)'); tests.push(line('sin(PI/2) => 1', approx(f8(0),1)));
       const f9 = compile('ln(E^2)'); tests.push(line('ln(E^2) => 2', approx(f9(0),2)));
+
+      // Variable support
+      const fv1 = compile('a*x + 2'); tests.push(line('a*x+2 with a=3, x=4 => 14', approx(fv1(4,{a:3}),14)));
+      const fv2 = compile('b^2 + x'); tests.push(line('b^2+x with b=-2, x=1 => 5', approx(fv2(1,{b:-2}),5)));
 
       testlog.textContent = `${tests.join('\n')}\n\n${tests.every(t=>t.startsWith('✅'))?'All passed.':'Some failed.'}`;
     }catch(e){ testlog.textContent = 'Test crashed: '+(e?.message||e); }
