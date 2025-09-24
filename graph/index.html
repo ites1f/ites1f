@@ -278,27 +278,31 @@ x^2 + b*x
     const pts = [];
     const vars = {};
     const lines = text.split('\n').map(s=>s.trim()).filter(Boolean);
-
+  
     // variable assignment: name = number (scientific notation allowed)
     const varRe = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([+-]?\d*\.?\d+(?:e[+-]?\d+)?)$/i;
-    // point: (x,y) or x,y
+    // point: (x,y) or x,y  (strict comma to avoid confusing with "x - y")
     const ptRe  = /^\(?\s*([+-]?\d*\.?\d+(?:e[+-]?\d+)?)\s*,\s*([+-]?\d*\.?\d+(?:e[+-]?\d+)?)\s*\)?$/i;
-    // ignore harmless “name(x)=” prefix before an expression
+    // optional “f(x) = ” style header
     const defHead = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\s*x\s*\)\s*=\s*/i;
-
-    for(let raw of lines){
-      const line = raw.replace(defHead,''); // drop `f(x)=` style prefixes
-
+  
+    for (let raw of lines){
+      const line = raw.replace(defHead,''); // drop f(x)= if present
+  
+      // 1) variables
       const mv = varRe.exec(line);
-      if(mv){ vars[mv[1]] = parseFloat(mv[2]); continue; }
-
+      if (mv){ vars[mv[1]] = parseFloat(mv[2]); continue; }
+  
+      // 2) points
       const mp = ptRe.exec(line);
-      if(mp){ pts.push({ x:parseFloat(mp[1]), y:parseFloat(mp[2]) }); continue; }
-
+      if (mp){ pts.push({ x:parseFloat(mp[1]), y:parseFloat(mp[2]) }); continue; }
+  
+      // 3) everything else is a function expr of x
       fns.push(line);
     }
     return { fns, pts, vars };
   }
+  
 
   function drawPoints(w,h, pts){
     ctx.lineWidth = 1.5;
@@ -325,21 +329,32 @@ x^2 + b*x
     drawGridAxes(w,h);
 
     // Read box → vars, functions, points
+    // Read box → vars, functions, points
     errEl.textContent = '';
     const { fns, pts, vars } = splitBox(fxArea.value);
-
-    // Draw functions (rainbow)
+    
+    // Draw functions (use canvas-safe, comma-style HSL; fallback to hex)
     const hues = [0,30,60,120,180,210,240,270,300];
     fns.forEach((line,i)=>{
       try{
-        const fn = compile(line.replaceAll('−','-')); if(!fn) return;
-        const color = `hsl(${hues[i % hues.length]}, 75%, 55%)`;
+        const expr = line.replaceAll('−','-'); // normalize minus
+        const fn = compile(expr);
+        // primary color (works on all canvas impls)
+        let color = `hsl(${hues[i % hues.length]}, 75%, 55%)`;
+        // super-safe fallback if the browser rejects hsl(): use hex palette
+        const fallback = ['#ff6b6b','#ffd166','#06d6a0','#4cc9f0','#a78bfa','#f472b6','#f59e0b','#22c55e','#60a5fa'];
+        try { ctx.strokeStyle = color; } catch { color = fallback[i % fallback.length]; }
+    
         plot(fn, w, h, color, vars);
-      }catch(e){ errEl.textContent = String(e.message||e); }
+      }catch(e){
+        errEl.textContent = 'Error: ' + String(e?.message || e);
+        console.error(e);
+      }
     });
-
-    // Draw points
+    
+    // Draw points last so they sit on top
     drawPoints(w,h, pts);
+    
   }
 
   // center origin initially
