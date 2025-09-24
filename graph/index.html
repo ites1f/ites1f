@@ -5,7 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Graph Calc</title>
   <style>
-    :root{ --bg:#0b1220; --panel:#0f172a; --ink:#e5e7eb; --muted:#94a3b8; }
+    /* Pure monochrome theme */
+    :root{
+      --bg:#0a0a0a;        /* page/canvas background */
+      --panel:#141414;     /* control panel bg */
+      --ink:#e6e6e6;       /* primary text */
+      --muted:#a3a3a3;     /* secondary text */
+      --border:#2a2a2a;    /* panel/border lines */
+      --ctl:#0f0f0f;       /* input/button bg */
+      --ctl-hover:#1a1a1a; /* hover */
+    }
     *{ box-sizing:border-box; }
     html, body { height:100%; }
     body{ margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans; }
@@ -18,29 +27,37 @@
     .panel {
       position: fixed; right: 16px; bottom: 16px;
       width: min(360px, 24vw); max-width: 92vw;
-      background: color-mix(in oklab, var(--panel) 88%, black 0%);
-      border: 1px solid #1f2937; border-radius: 14px; padding: 12px;
+      background: var(--panel);
+      border: 1px solid var(--border); border-radius: 14px; padding: 12px;
       display: grid; gap: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.35);
       backdrop-filter: blur(2px);
     }
     .row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
     .muted{ color:var(--muted); font-size:12px; }
     textarea{
-      width:100%; height:96px; background:#0b1220; color:var(--ink);
-      border:1px solid #1f2937; border-radius:10px; padding:10px; resize:vertical;
+      width:100%; height:96px;
+      background:var(--ctl); color:var(--ink);
+      border:1px solid var(--border); border-radius:10px; padding:10px; resize:vertical;
     }
     input[type="range"]{ width: 160px; }
     button{
-      background:#0f172a; color:var(--ink);
-      border:1px solid #1f2937; padding:6px 10px;
+      background:var(--ctl); color:var(--ink);
+      border:1px solid var(--border); padding:6px 10px;
       border-radius:999px; cursor:pointer; font-size:13px;
     }
-    button:hover{ background:#111827; }
-    label.toggle{ display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border:1px solid #1f2937; border-radius:999px; background:#0f172a; }
-    .err{ color:#fda4af; font-size:13px; min-height: 1.2em; }
+    button:hover{ background:var(--ctl-hover); }
+    label.toggle{
+      display:inline-flex; align-items:center; gap:6px; padding:4px 8px;
+      border:1px solid var(--border); border-radius:999px; background:var(--ctl);
+    }
+    .err{ color:#d4d4d4; font-size:13px; min-height: 1.2em; }  /* grayscale errors */
 
     details > summary{ cursor:pointer; color:var(--muted); font-size:12px; }
-    .tests{ font-size:12px; white-space:pre-wrap; background:#0f172a; color:var(--ink); border:1px solid #1f2937; border-radius:10px; padding:10px; }
+    .tests{
+      font-size:12px; white-space:pre-wrap;
+      background:var(--panel); color:var(--ink); border:1px solid var(--border);
+      border-radius:10px; padding:10px;
+    }
   </style>
 </head>
 <body>
@@ -206,8 +223,8 @@
     const ySpan = h / scale;   // world units vertically
     const step  = niceStep(Math.min(xSpan, ySpan) / 10);
 
-    // Grid (extra muted)
-    ctx.strokeStyle = '#111827';
+    // Grid (pure gray)
+    ctx.strokeStyle = '#1a1a1a';
     for (let x = Math.ceil(-origin.x/scale/step)*step; x < (w-origin.x)/scale; x += step) {
       const sx = origin.x + x*scale; ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, h); ctx.stroke();
     }
@@ -216,12 +233,12 @@
     }
 
     // Axes (slightly brighter)
-    ctx.strokeStyle = '#6b7280';
+    ctx.strokeStyle = '#6b6b6b';
     ctx.beginPath(); ctx.moveTo(0, origin.y); ctx.lineTo(w, origin.y); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(origin.x, 0); ctx.lineTo(origin.x, h); ctx.stroke();
 
-    // Tick labels (same step)
-    ctx.fillStyle = '#94a3b8'; ctx.font = '12px system-ui';
+    // Tick labels (gray)
+    ctx.fillStyle = '#a3a3a3'; ctx.font = '12px system-ui';
     for (let x = Math.ceil(-origin.x/scale/step)*step; x < (w-origin.x)/scale; x += step) {
       if (Math.abs(x) < 1e-9) continue; const sx = origin.x + x*scale; ctx.fillText(formatTick(x, step), sx+2, origin.y+12);
     }
@@ -247,22 +264,21 @@
     const w = c.clientWidth * dpr, h = c.clientHeight * dpr;
     if (c.width!==w || c.height!==h){ c.width=w; c.height=h; }
 
-    // Background
-    ctx.fillStyle = '#0b1220';
+    // Background (pure gray/black)
+    ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0,0,w,h);
 
     // Grid & axes
     drawGridAxes(w,h);
 
-    // Functions (desaturated grayscale lines)
+    // Functions — rainbow (comma-style HSL for canvas compatibility)
     errEl.textContent = '';
     const lines = fxArea.value.split('\n').map(s=>s.trim()).filter(Boolean);
-    const lights = [70, 74, 78, 82, 86]; // varying lightness, 0% saturation
+    const hues = [0,30,60,120,180,210,240,270,300];  // rainbow wheel
     lines.forEach((line,i)=>{
       try{
         const fn = compile(line.replaceAll('−','-')); if(!fn) return;
-        const grays = ["#9aa4b2", "#a5aeb9", "#b0b8c2", "#bbc2cb", "#c6cbd4"];
-        const color = grays[i % grays.length];
+        const color = `hsl(${hues[i % hues.length]}, 75%, 55%)`; // bright rainbow lines
         plot(fn, w, h, color);
       }catch(e){ errEl.textContent = String(e.message||e); }
     });
