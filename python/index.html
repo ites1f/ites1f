@@ -33,7 +33,7 @@
   <script src="https://cdn.jsdelivr.net/npm/y-webrtc@10.6.3/dist/y-webrtc.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/y-monaco@0.4.3/dist/y-monaco.js"></script>
 
-  <!-- Pyodide (lazy-loaded later) -->
+  <!-- Pyodide (lazy-loaded) -->
   <script>
     const pyodideReady = (async () => {
       const s = document.createElement('script');
@@ -83,11 +83,9 @@ print(greet("world"))
         fontSize: 14,
         minimap: { enabled: true }
       });
-      // Enable buttons once editor is ready
       document.getElementById('connectBtn').disabled = false;
       document.getElementById('runBtn').disabled = false;
 
-      // If URL has #room, auto-connect
       if (location.hash) {
         const roomFromHash = decodeURIComponent(location.hash.slice(1));
         document.getElementById('room').value = roomFromHash;
@@ -102,7 +100,6 @@ print(greet("world"))
       if (!room) { alert("Enter a room id"); return; }
       if (!editor) { alert("Editor not ready yet"); return; }
 
-      // Clean previous session if any
       if (monacoBinding && monacoBinding.destroy) monacoBinding.destroy();
       if (provider) provider.destroy();
 
@@ -116,6 +113,14 @@ print(greet("world"))
       });
 
       awareness = provider.awareness;
+
+      // Set local presence so you count as a peer
+      const me = {
+        name: "guest" + Math.floor(Math.random() * 9999),
+        color: "#" + Math.floor(Math.random()*0xffffff).toString(16).padStart(6,"0")
+      };
+      awareness.setLocalState({ user: me });
+
       ytext = ydoc.getText("file.py");
 
       const MonacoBindingCtor =
@@ -129,18 +134,15 @@ print(greet("world"))
         awareness
       );
 
-      // Seed content if empty, otherwise pull remote
       if (ytext.length === 0) {
         ytext.insert(0, editor.getValue());
       } else {
         editor.setValue(ytext.toString());
       }
 
-      // UI + shareable link
       document.getElementById('status').textContent = `Room: ${room}`;
       history.replaceState(null, "", "#" + encodeURIComponent(room));
 
-      // Peers indicator
       const peersEl = document.getElementById('peers');
       const updatePeers = () => {
         peersEl.textContent = `peers: ${awareness.getStates().size}`;
