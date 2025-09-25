@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Collaborative Python Editor</title>
+  <style>
+    :root { --bg:#0b1220; --ink:#e9eefc; --panel:#111827; --muted:#9aa4bf; }
+    html, body { height:100%; margin:0; background:var(--bg); color:var(--ink); font-family:ui-sans-serif,system-ui; }
+    .topbar {
+      display:flex; gap:12px; align-items:center; padding:10px 12px; background:var(--panel);
+      position:sticky; top:0; z-index:5; border-bottom:1px solid #1f2937;
+    }
+    .topbar input, .topbar button {
+      background:#0f172a; color:var(--ink); border:1px solid #1f2937; border-radius:8px; padding:8px 10px;
+    }
+    .topbar button { cursor:pointer }
+    .status { font-size:12px; color:var(--muted); }
+    #editor { height: calc(100vh - 52px); width:100%; }
+    #output {
+      white-space:pre-wrap; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, "Courier New", monospace;
+      background:#0f172a; padding:10px; border-top:1px solid #1f2937; max-height:40vh; overflow:auto;
+    }
+    .bottom { position:fixed; left:0; right:0; bottom:0; }
+  </style>
+  <!-- Monaco loader -->
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
+
+  <!-- Yjs + providers -->
+  <script src="https://cdn.jsdelivr.net/npm/yjs@13.6.18/dist/yjs.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/y-webrtc@10.6.3/dist/y-webrtc.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/y-monaco@0.4.3/dist/y-monaco.js"></script>
+
+  <!-- Pyodide for Python execution in browser -->
+  <script>
+    // Load Pyodide lazily after the page paints
+    const pyodideReady = (async () => {
+      const s = document.createElement('script');
+      s.src = "https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js";
+      document.head.appendChild(s);
+      await new Promise(r => s.onload = r);
+      return await loadPyodide();
+    })();
+  </script>
+</head>
+<body>
+  <div class="topbar">
+    <div class="status" id="status">Room:</div>
+    <input id="room" placeholder="room-id (same id = same file)" />
+    <button id="connectBtn">Connect</button>
+    <button id="runBtn">Run (Pyodide)</button>
+    <span class="status" id="peers">peers: 0</span>
+  </div>
+
+  <div id="editor"></div>
+
+  <div class="bottom" id="bottom" style="display:none;">
+    <div id="output"></div>
+  </div>
+
+  <script>
+    // --- Monaco bootstrap ---
+    let editor, ydoc, provider, ytext, awareness;
+    const defaultCode = `# Collaborative Python file
+# Open this page on two devices with the SAME "room-id"
+# You'll see real-time edits. Click "Run" to execute with Pyodide.
+
+def greet(name):
+    return "Hello, " + name + "!"
+
+print(greet("world"))
+`;
+
+    // Monaco loader config
+    require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs' } });
+    require(["vs/editor/editor.main"], function () {
+      editor = monaco.editor.create(document.getElementById('editor'), {
+        value: defaultCode,
+        language: "python",
+        theme: "vs-dark",
+        automaticLayout: true,
+        fontSize: 14,
+        minimap: { enabled: true }
+      });
+    });
+
+    // --- Collaboration connect ---
+    const statusEl = document.getElementById('status');
+    const peersEl = document.getElementById('peers');
+    const roomInput = document.getElementById('room');
+    const connectBtn = document.getElementById('connectBtn');
+
+    function connect(room) {
+      if (!room) { alert("Enter a room id"); return; }
+      if (provider) { provider.destroy(); }
+
+      ydoc = new Y.Doc();
+      // y-webrtc with public signaling servers (you can host your own later)
+      provider = new Y.WebrtcProvider(room, ydoc, {
+        // Default public signaling servers from y-webrtc
+        signaling: [
+          'wss://signaling.yjs.dev',
+          'wss://y-webrtc-signaling-eu.herokuapp.com',
+          'wss://y-webrtc-signaling-us.herokuapp.com'
+        ],
+        password: undefined, // optionally set your own
+        awareness: new awarenessProtocol.Awareness(ydoc)
+      });
+
+      awareness = provider.awareness;
+      ytext = ydoc.getText("file.py");
+
+      // Bind Monaco <-> Yjs
+      if (window.yMonacoBinding) window.yMonacoBinding.destroy?.();
+      window.yMonacoBinding = new window.yMonaco.MonacoBinding(ytext, editor.getModel(), new Set([editor]), awareness);
+
+      // Initialize content once (only if empty)
+      if (ytext.length === 0) {
+        ytext.insert(0, editor.getValue());
+      } else {
+        editor.setValue(ytext.toString());
+      }
+
+      statusEl.textContent = `Room: ${room}`;
+      // Peer awareness updates
+      const updatePeers = () => {
+        const states = Array.from(awareness.getStates().keys());
+        peersEl.textContent = `peers: ${states.length}`;
+      };
+      awareness.on('update', updatePeers);
+      provider.on('status', e => {
+        const st = e.status === 'connected' ? 'connected' : 'disconnected';
+        statusEl.textContent = `Room: ${room} (${st})`;
+      });
+    }
+
+    connectBtn.addEventListener('click', () => connect(roomInput.value.trim()));
+
+    // Auto room from URL hash: https://yoursite/#my-room
+    if (location.hash) {
+      const roomFromHash = decodeURIComponent(location.hash.slice(1));
+      roomInput.value = roomFromHash;
+      connect(roomFromHash);
+    }
+
+    // --- Run code via Pyodide ---
+    const runBtn = document.getElementById('runBtn');
+    const bottom = document.getElementById('bottom');
+    const output = document.getElementById('output');
+
+    function showOutput(text) {
+      bottom.style.display = 'block';
+      output.textContent = text;
+    }
+
+    runBtn.addEventListener('click', async () => {
+      showOutput("⏳ Loading Pyodide / running code...");
+      try {
+        const pyodide = await pyodideReady;
+        // Capture print output
+        let stdout = "";
+        pyodide.setStdout({ batched: (s) => { stdout += s; } });
+        pyodide.setStderr({ batched: (s) => { stdout += s; } });
+        const code = editor.getValue();
+        await pyodide.runPythonAsync(code);
+        showOutput(stdout || "✅ Finished (no output)");
+      } catch (err) {
+        showOutput("❌ Error:\n" + (err && err.message ? err.message : String(err)));
+      }
+    });
+  </script>
+
+  <!-- Awareness protocol shim (used by y-webrtc) -->
+  <script src="https://cdn.jsdelivr.net/npm/y-protocols@1.0.6/dist/awareness.cjs"></script>
+  <script>
+    // y-webrtc expects awarenessProtocol in global
+    window.awarenessProtocol = window.awarenessProtocol || window;
+  </script>
+</body>
+</html>
