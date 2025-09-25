@@ -11,6 +11,7 @@
       display:flex; gap:12px; align-items:center; padding:10px 12px; background:var(--panel);
       position:sticky; top:0; z-index:5; border-bottom:1px solid #1f2937;
     }
+    .label { color:var(--muted); margin-right:6px; }
     .topbar input, .topbar button {
       background:#0f172a; color:var(--ink); border:1px solid #1f2937; border-radius:8px; padding:8px 10px;
     }
@@ -23,6 +24,7 @@
     }
     .bottom { position:fixed; left:0; right:0; bottom:0; }
   </style>
+
   <!-- Monaco loader -->
   <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
 
@@ -31,9 +33,8 @@
   <script src="https://cdn.jsdelivr.net/npm/y-webrtc@10.6.3/dist/y-webrtc.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/y-monaco@0.4.3/dist/y-monaco.js"></script>
 
-  <!-- Pyodide for Python execution in browser -->
+  <!-- Pyodide (lazy-loaded later) -->
   <script>
-    // Load Pyodide lazily after the page paints
     const pyodideReady = (async () => {
       const s = document.createElement('script');
       s.src = "https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js";
@@ -45,10 +46,11 @@
 </head>
 <body>
   <div class="topbar">
-    <div class="status" id="status">Room:</div>
+    <span class="label">Room:</span>
     <input id="room" placeholder="room-id (same id = same file)" />
-    <button id="connectBtn">Connect</button>
-    <button id="runBtn">Run (Pyodide)</button>
+    <button id="connectBtn" disabled>Connect</button>
+    <button id="runBtn" disabled>Run (Pyodide)</button>
+    <span class="status" id="status">Room:</span>
     <span class="status" id="peers">peers: 0</span>
   </div>
 
@@ -59,8 +61,8 @@
   </div>
 
   <script>
-    // --- Monaco bootstrap ---
-    let editor, ydoc, provider, ytext, awareness;
+    // ---------- Monaco boot ----------
+    let editor;
     const defaultCode = `# Collaborative Python file
 # Open this page on two devices with the SAME "room-id"
 # You'll see real-time edits. Click "Run" to execute with Pyodide.
@@ -71,7 +73,6 @@ def greet(name):
 print(greet("world"))
 `;
 
-    // Monaco loader config
     require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs' } });
     require(["vs/editor/editor.main"], function () {
       editor = monaco.editor.create(document.getElementById('editor'), {
@@ -82,99 +83,102 @@ print(greet("world"))
         fontSize: 14,
         minimap: { enabled: true }
       });
+      // Enable buttons once editor is ready
+      document.getElementById('connectBtn').disabled = false;
+      document.getElementById('runBtn').disabled = false;
+
+      // If URL has #room, auto-connect
+      if (location.hash) {
+        const roomFromHash = decodeURIComponent(location.hash.slice(1));
+        document.getElementById('room').value = roomFromHash;
+        connect(roomFromHash);
+      }
     });
 
-    // --- Collaboration connect ---
-    const statusEl = document.getElementById('status');
-    const peersEl = document.getElementById('peers');
-    const roomInput = document.getElementById('room');
-    const connectBtn = document.getElementById('connectBtn');
+    // ---------- Collab (Yjs + y-webrtc) ----------
+    let ydoc, provider, ytext, awareness, monacoBinding;
 
     function connect(room) {
       if (!room) { alert("Enter a room id"); return; }
-      if (provider) { provider.destroy(); }
+      if (!editor) { alert("Editor not ready yet"); return; }
+
+      // Clean previous session if any
+      if (monacoBinding && monacoBinding.destroy) monacoBinding.destroy();
+      if (provider) provider.destroy();
 
       ydoc = new Y.Doc();
-      // y-webrtc with public signaling servers (you can host your own later)
       provider = new Y.WebrtcProvider(room, ydoc, {
-        // Default public signaling servers from y-webrtc
         signaling: [
           'wss://signaling.yjs.dev',
           'wss://y-webrtc-signaling-eu.herokuapp.com',
           'wss://y-webrtc-signaling-us.herokuapp.com'
-        ],
-        password: undefined, // optionally set your own
-        awareness: new awarenessProtocol.Awareness(ydoc)
+        ]
       });
 
       awareness = provider.awareness;
       ytext = ydoc.getText("file.py");
 
-      // Bind Monaco <-> Yjs
-      if (window.yMonacoBinding) window.yMonacoBinding.destroy?.();
-      window.yMonacoBinding = new window.yMonaco.MonacoBinding(ytext, editor.getModel(), new Set([editor]), awareness);
+      const MonacoBindingCtor =
+        (window.yMonaco && window.yMonaco.MonacoBinding) ||
+        (window.YMonaco && window.YMonaco.MonacoBinding);
 
-      // Initialize content once (only if empty)
+      monacoBinding = new MonacoBindingCtor(
+        ytext,
+        editor.getModel(),
+        new Set([editor]),
+        awareness
+      );
+
+      // Seed content if empty, otherwise pull remote
       if (ytext.length === 0) {
         ytext.insert(0, editor.getValue());
       } else {
         editor.setValue(ytext.toString());
       }
 
-      statusEl.textContent = `Room: ${room}`;
-      // Peer awareness updates
+      // UI + shareable link
+      document.getElementById('status').textContent = `Room: ${room}`;
+      history.replaceState(null, "", "#" + encodeURIComponent(room));
+
+      // Peers indicator
+      const peersEl = document.getElementById('peers');
       const updatePeers = () => {
-        const states = Array.from(awareness.getStates().keys());
-        peersEl.textContent = `peers: ${states.length}`;
+        peersEl.textContent = `peers: ${awareness.getStates().size}`;
       };
       awareness.on('update', updatePeers);
       provider.on('status', e => {
-        const st = e.status === 'connected' ? 'connected' : 'disconnected';
-        statusEl.textContent = `Room: ${room} (${st})`;
+        document.getElementById('status').textContent =
+          `Room: ${room} (${e.status})`;
       });
+      updatePeers();
     }
 
-    connectBtn.addEventListener('click', () => connect(roomInput.value.trim()));
+    document.getElementById('connectBtn').addEventListener('click', () => {
+      connect(document.getElementById('room').value.trim());
+    });
 
-    // Auto room from URL hash: https://yoursite/#my-room
-    if (location.hash) {
-      const roomFromHash = decodeURIComponent(location.hash.slice(1));
-      roomInput.value = roomFromHash;
-      connect(roomFromHash);
-    }
-
-    // --- Run code via Pyodide ---
-    const runBtn = document.getElementById('runBtn');
+    // ---------- Run via Pyodide ----------
     const bottom = document.getElementById('bottom');
     const output = document.getElementById('output');
-
     function showOutput(text) {
       bottom.style.display = 'block';
       output.textContent = text;
     }
 
-    runBtn.addEventListener('click', async () => {
+    document.getElementById('runBtn').addEventListener('click', async () => {
       showOutput("⏳ Loading Pyodide / running code...");
       try {
         const pyodide = await pyodideReady;
-        // Capture print output
         let stdout = "";
-        pyodide.setStdout({ batched: (s) => { stdout += s; } });
-        pyodide.setStderr({ batched: (s) => { stdout += s; } });
+        pyodide.setStdout({ batched: s => { stdout += s; } });
+        pyodide.setStderr({ batched: s => { stdout += s; } });
         const code = editor.getValue();
         await pyodide.runPythonAsync(code);
         showOutput(stdout || "✅ Finished (no output)");
       } catch (err) {
-        showOutput("❌ Error:\n" + (err && err.message ? err.message : String(err)));
+        showOutput("❌ Error:\n" + (err?.message || String(err)));
       }
     });
-  </script>
-
-  <!-- Awareness protocol shim (used by y-webrtc) -->
-  <script src="https://cdn.jsdelivr.net/npm/y-protocols@1.0.6/dist/awareness.cjs"></script>
-  <script>
-    // y-webrtc expects awarenessProtocol in global
-    window.awarenessProtocol = window.awarenessProtocol || window;
   </script>
 </body>
 </html>
