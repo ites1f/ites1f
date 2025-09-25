@@ -11,13 +11,14 @@
       --muted:#a3a3a3;     --border:#2a2a2a; --ctl:#0f0f0f; --ctl-hover:#1a1a1a;
     }
     *{ box-sizing:border-box; } html, body { height:100%; }
-    body{ margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans; }
+    body{ margin:0; background:var(--bg); color:var(--ink);
+      font:16px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans; }
 
     /* Fullscreen canvas */
     #stage { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
     canvas#c { width: 100%; height: 100%; display: block; }
 
-    /* Compact control panel (~1/16 screen, bottom-left) */
+    /* Left control panel (~1/16 screen, bottom-left) */
     .panel {
       position: fixed; left: 16px; bottom: 16px; right: auto;
       width: min(360px, 24vw); max-width: 92vw;
@@ -51,16 +52,36 @@
       background:var(--panel); color:var(--ink); border:1px solid var(--border);
       border-radius:10px; padding:10px;
     }
+
+    /* Right variable sliders panel */
+    .varpanel{
+      position: fixed; right: 16px; top: 16px; bottom: auto;
+      width: min(320px, 22vw); max-width: 92vw;
+      background: var(--panel);
+      border: 1px solid var(--border); border-radius: 14px; padding: 12px;
+      display: grid; gap: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.35);
+    }
+    .varRow{
+      display:grid; grid-template-columns: 1fr auto; gap: 6px; align-items:center;
+    }
+    .varRow label{
+      display:flex; gap:8px; align-items:center; color:var(--ink); font-size:13px;
+    }
+    .varRow small{ color:var(--muted); }
+    .varRow input[type="range"]{ width:100%; }
   </style>
 </head>
 <body>
 
   <div id="stage"><canvas id="c"></canvas></div>
 
-  <!-- Compact control panel -->
+  <!-- Left: main controls -->
   <div class="panel" role="region" aria-label="Graph Controls">
     <div class="muted">
-      In one box: define <b>variables</b> (<code>a = 16</code>), <b>points</b> (<code>(1,2)</code> or <code>1,2</code>), and <b>functions of x</b> (<code>a*sin(x)</code>, <code>x^2 + b*x</code>). Powers: <code>^</code>. Built-ins: <code>sin, cos, tan, log/ln, exp, sqrt, abs, floor, ceil, round, PI, E</code>.
+      One box for everything: <b>variables</b> (<code>a = 16</code>), <b>points</b> (<code>(1,2)</code> or <code>1,2</code>),
+      and <b>functions of x</b> (<code>a*sin(x)</code>, <code>x^2 + b*x</code>). Powers: <code>^</code>. Built-ins:
+      <code>sin, cos, tan, log/ln, exp, sqrt, abs, floor, ceil, round, PI, E</code>.
+      <br>Variables automatically get <b>sliders on the right</b>.
     </div>
     <textarea id="fx" placeholder="Examples:
 a = 1.5
@@ -95,6 +116,12 @@ x^2 + b*x
         <button id="runTests">Run tests</button>
       </div>
     </details>
+  </div>
+
+  <!-- Right: dynamic variable sliders -->
+  <div id="varPanel" class="varpanel" role="region" aria-label="Variable Sliders" hidden>
+    <div class="muted">Variables</div>
+    <div id="varList"></div>
   </div>
 
 <script type="module">
@@ -215,11 +242,19 @@ x^2 + b*x
   const testlog = document.getElementById('testlog');
   const clickAdd = document.getElementById('clickAdd');
 
-  let scale = 40;            // px per unit (same for X and Y) — validated below
+  // Right sliders panel
+  const varPanel = document.getElementById('varPanel');
+  const varList  = document.getElementById('varList');
+
+  let scale = 40;            // px per unit (validated)
   let origin = { x: 0, y: 0 };
   let dragging = false; let dragStart = { x:0, y:0, ox:0, oy:0 };
 
-  // Robust step: always return something sane
+  // Slider state (overrides)
+  const varOverrides = Object.create(null);
+  let lastVarKeysSig = '';
+
+  // Robust step
   function niceStep(target){
     const t = toFiniteNumber(target, 1);
     if (!(t > 0)) return 1;
@@ -246,7 +281,7 @@ x^2 + b*x
     let step  = niceStep(Math.min(xSpan, ySpan) / 10);
     if (!(step > 0)) step = 1;
 
-    // Grid (pure gray)
+    // Grid
     ctx.strokeStyle = '#1a1a1a';
     for (let x = Math.ceil(-origin.x/sx/step)*step; x < (w-origin.x)/sx; x += step) {
       const gx = origin.x + x*sx; ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, h); ctx.stroke();
@@ -255,12 +290,12 @@ x^2 + b*x
       const gy = origin.y - y*sx; ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke();
     }
 
-    // Axes (slightly brighter)
+    // Axes
     ctx.strokeStyle = '#6b6b6b';
     ctx.beginPath(); ctx.moveTo(0, origin.y); ctx.lineTo(w, origin.y); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(origin.x, 0); ctx.lineTo(origin.x, h); ctx.stroke();
 
-    // Tick labels (gray)
+    // Tick labels
     ctx.fillStyle = '#a3a3a3'; ctx.font = '12px system-ui';
     for (let x = Math.ceil(-origin.x/sx/step)*step; x < (w-origin.x)/sx; x += step) {
       if (Math.abs(x) < 1e-9) continue; const gx = origin.x + x*sx; ctx.fillText(formatTick(x, step), gx+2, origin.y+12);
@@ -283,7 +318,7 @@ x^2 + b*x
     ctx.stroke();
   }
 
-  // Split the single text area into vars + functions + points
+  // Parse the single box into vars + functions + points
   function splitBox(text){
     const fns = [];
     const pts = [];
@@ -321,6 +356,65 @@ x^2 + b*x
     }
   }
 
+  // Build/update variable sliders on the right
+  function guessRangeFor(v){
+    const a = Math.abs(v);
+    if (a >= 1){
+      const r = a * 2;
+      return { min: -r, max: +r, step: +(r/100).toPrecision(2) };
+    }
+    return { min: -10, max: 10, step: 0.1 };
+  }
+
+  function ensureVarControls(varsFromText){
+    const keys = Object.keys(varsFromText).sort();
+    const sig = keys.join(',');
+    if (sig === lastVarKeysSig) return; // no change, keep as-is
+
+    // Rebuild panel
+    lastVarKeysSig = sig;
+    varList.innerHTML = '';
+    varPanel.hidden = keys.length === 0;
+
+    keys.forEach(name=>{
+      const initVal = toFiniteNumber(
+        varOverrides[name] !== undefined ? varOverrides[name] : varsFromText[name],
+        0
+      );
+      const { min, max, step } = guessRangeFor(initVal);
+
+      const row = document.createElement('div');
+      row.className = 'varRow';
+      row.innerHTML = `
+        <label for="var_${name}">
+          <strong>${name}</strong>
+          <small id="lbl_${name}">${initVal}</small>
+        </label>
+        <input id="var_${name}" type="range" min="${min}" max="${max}" step="${step}" value="${initVal}" />
+      `;
+      varList.appendChild(row);
+
+      const slider = row.querySelector(`#var_${name}`);
+      const label  = row.querySelector(`#lbl_${name}`);
+
+      slider.addEventListener('input', ()=>{
+        const v = toFiniteNumber(slider.value, initVal);
+        varOverrides[name] = v;
+        label.textContent = v;
+        if (autoUpdate.checked) render();
+      });
+    });
+  }
+
+  function mergedEnv(varsFromText){
+    // Slider overrides win; fallback to text value
+    const env = { ...varsFromText };
+    for (const k in varOverrides){
+      env[k] = varOverrides[k];
+    }
+    return env;
+  }
+
   function safeCanvasSize(){
     const dpr = toFiniteNumber(window.devicePixelRatio, 1) || 1;
     let w = Math.max(1, Math.floor(c.clientWidth * dpr));
@@ -344,9 +438,15 @@ x^2 + b*x
       // Grid & axes
       drawGridAxes(w,h);
 
-      // Read box → vars, functions, points
+      // Read box
       errEl.textContent = '';
       const { fns, pts, vars } = splitBox(fxArea.value);
+
+      // Build/update sliders if var set changed
+      ensureVarControls(vars);
+
+      // Env with overrides applied
+      const env = mergedEnv(vars);
 
       // Draw functions (safe HSL; fallback hex)
       const hues = [0,30,60,120,180,210,240,270,300];
@@ -356,16 +456,14 @@ x^2 + b*x
           const expr = line.replaceAll('−','-'); // normalize minus
           const fn = compile(expr);
           let color = `hsl(${hues[i % hues.length]}, 75%, 55%)`;
-          // If a browser throws on color assignment (rare), use hex fallback.
           try { ctx.strokeStyle = color; } catch { color = fallback[i % fallback.length]; }
-          plot(fn, w, h, color, vars);
+          plot(fn, w, h, color, env);
         }catch(e){ errEl.textContent += (errEl.textContent?'\n':'') + 'Fn error: ' + String(e?.message||e); }
       });
 
-      // Draw points on top
+      // Points
       drawPoints(w,h, pts);
     }catch(e){
-      // Never let a thrown error skip the frame silently
       errEl.textContent = 'Render error: ' + String(e?.message || e);
       console.error(e);
     }
@@ -387,8 +485,13 @@ x^2 + b*x
   });
 
   document.getElementById('resetFns').addEventListener('click', ()=>{
-    fxArea.value = ''; render();
+    fxArea.value = '';
+    // clearing text also clears overrides and sliders
+    for (const k in varOverrides) delete varOverrides[k];
+    lastVarKeysSig = '';
+    render();
   });
+
   document.getElementById('resetView').addEventListener('click', ()=>{
     scale = 40; scaleInput.value = '40'; scaleLabel.textContent='40 px/unit';
     centerOrigin(); render();
@@ -398,7 +501,7 @@ x^2 + b*x
   c.addEventListener('click', (e)=>{
     if(!document.getElementById('clickAdd').checked) return;
     const rect = c.getBoundingClientRect();
-    const { w, h, dpr } = safeCanvasSize();
+    const { dpr } = safeCanvasSize();
     const sx = (e.clientX - rect.left) * dpr;
     const sy = (e.clientY - rect.top) * dpr;
     const x = (sx - origin.x) / scale;
@@ -454,10 +557,8 @@ x^2 + b*x
       const f7 = compile('-x'); tests.push(line('unary minus: -x at x=5 => -5', approx(f7(5),-5)));
       const f8 = compile('sin(PI/2)'); tests.push(line('sin(PI/2) => 1', approx(f8(0),1)));
       const f9 = compile('ln(E^2)'); tests.push(line('ln(E^2) => 2', approx(f9(0),2)));
-
       const fv1 = compile('a*x + 2'); tests.push(line('a*x+2 with a=3, x=4 => 14', approx(fv1(4,{a:3}),14)));
       const fv2 = compile('b^2 + x'); tests.push(line('b^2+x with b=-2, x=1 => 5', approx(fv2(1,{b:-2}),5)));
-
       testlog.textContent = `${tests.join('\n')}\n\n${tests.every(t=>t.startsWith('✅'))?'All passed.':'Some failed.'}`;
     }catch(e){ testlog.textContent = 'Test crashed: '+(e?.message||e); }
   }
