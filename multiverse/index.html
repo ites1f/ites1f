@@ -28,4 +28,192 @@
   <style>
     :root{
       --bg:#0b1220; --ink:#e9eefc; --muted:#a9b4d6; --card:#121a2e; --accent:#62d0ff;
-      --ring:rgba(98,208,255,.55); --shadow:rgba(0,0,0
+      --ring:rgba(98,208,255,.55); --shadow:rgba(0,0,0,.35);
+      color-scheme: light dark;
+    }
+    html[data-theme="light"]{
+      --bg:#f7f8fc; --ink:#0f172a; --muted:#475569; --card:#ffffff; --accent:#2563eb;
+      --ring:rgba(37,99,235,.4); --shadow:rgba(0,0,0,.12);
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0; padding:0}
+    body{
+      font: 500 16px/1.6 system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, Apple SD Gothic Neo, "Segoe UI Emoji", sans-serif;
+      background: var(--bg); color: var(--ink);
+    }
+    a{color:inherit; text-decoration:none}
+    .wrap{max-width:1100px; margin-inline:auto; padding:24px;}
+
+    /* Header */
+    header{display:flex; align-items:center; gap:12px; justify-content:space-between; margin-bottom:20px}
+    .brand{display:flex; align-items:center; gap:12px}
+    .logo{width:40px; height:40px; border-radius:12px; background:linear-gradient(135deg,var(--accent),#8b5cf6)}
+    .title{font-size:clamp(20px,3vw,28px); font-weight:800; letter-spacing:.2px}
+    .muted{color:var(--muted)}
+    .controls{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+
+    /* Inputs */
+    .search{
+      position:relative; flex:1 1 320px; max-width:420px;
+    }
+    .search input{
+      width:100%; background:var(--card); color:var(--ink);
+      border:1px solid transparent; outline:none;
+      padding:12px 14px 12px 40px; border-radius:12px;
+      box-shadow: 0 6px 20px var(--shadow);
+    }
+    .search input:focus{border-color:var(--ring); box-shadow:0 0 0 4px var(--ring)}
+    .search svg{position:absolute; left:12px; top:50%; transform:translateY(-50%); opacity:.7}
+
+    .btn{
+      background:var(--card); border:1px solid transparent; color:var(--ink);
+      padding:10px 14px; border-radius:12px; cursor:pointer;
+      box-shadow: 0 6px 20px var(--shadow);
+    }
+    .btn:focus-visible{outline:none; border-color:var(--ring); box-shadow:0 0 0 4px var(--ring)}
+
+    /* Grid of 9 */
+    .grid{
+      display:grid; gap:16px;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      margin-top:16px;
+    }
+    .card{
+      background:var(--card); border-radius:16px; padding:16px; border:1px solid rgba(255,255,255,.06);
+      transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+      display:block; height:100%;
+    }
+    .card:hover{ transform: translateY(-2px); box-shadow:0 12px 28px var(--shadow); border-color:var(--ring) }
+    .card h3{margin:0 0 6px; font-size:18px}
+    .card p{margin:0; color:var(--muted); font-size:14px}
+
+    /* Footer */
+    footer{margin-top:28px; border-top:1px solid rgba(255,255,255,.08); padding-top:16px; color:var(--muted); font-size:14px}
+
+    /* Skip link (a11y) */
+    .skip-link{
+      position:absolute; left:8px; top:-40px; padding:8px 12px; border-radius:10px;
+      background:var(--card); box-shadow:0 4px 12px var(--shadow);
+    }
+    .skip-link:focus{top:8px}
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="wrap">
+    <header aria-label="Site header">
+      <div class="brand" role="img" aria-label="Site logo and title">
+        <div class="logo" aria-hidden="true"></div>
+        <div>
+          <div class="title">ites1f — Web Stuff Hub</div>
+          <div class="muted">Jump to any of my 9 sites & projects.</div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <label class="search" aria-label="Filter sites">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M21 21l-4.2-4.2M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15z"
+                  stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+          <input id="q" type="search" placeholder="Search sites…" autocomplete="off" />
+        </label>
+        <button id="themeBtn" class="btn" type="button" aria-pressed="false" aria-label="Toggle dark mode">🌗 Theme</button>
+      </div>
+    </header>
+
+    <main id="main" tabindex="-1">
+      <section class="grid" id="cards" aria-label="Links to my 9 websites">
+        <!-- Replace href, title, and descriptions -->
+        <a class="card" href="https://ites1f.github.io" target="_blank" rel="noopener" data-tags="home portfolio main">
+          <h3>Home / Portfolio</h3>
+          <p>Main landing page with recent projects.</p>
+        </a>
+        <a class="card" href="https://ites1f.github.io/mc/" target="_blank" rel="noopener" data-tags="minecraft mc">
+          <h3>Minecraft Hub</h3>
+          <p>Servers, mods, configs, writeups.</p>
+        </a>
+        <a class="card" href="https://ites1f.github.io/sbcalc/" target="_blank" rel="noopener" data-tags="skyblock hypixel api">
+          <h3>SkyBlock Calculator</h3>
+          <p>Stats + calculators using Hypixel API.</p>
+        </a>
+        <a class="card" href="https://ites1f.github.io/code/" target="_blank" rel="noopener" data-tags="code snippets algorithms">
+          <h3>Code Snippets</h3>
+          <p>Reusable bits for web, Python, and more.</p>
+        </a>
+        <a class="card" href="https://ites1f.github.io/labs/" target="_blank" rel="noopener" data-tags="labs experiments sandbox">
+          <h3>Labs</h3>
+          <p>Experimental prototypes & demos.</p>
+        </a>
+        <a class="card" href="https://ites1f.github.io/blog/" target="_blank" rel="noopener" data-tags="blog notes diary">
+          <h3>Notes / Blog</h3>
+          <p>Short posts, devlogs, and ideas.</p>
+        </a>
+        <a class="card" href="https://ites1f.github.io/graph/" target="_blank" rel="noopener" data-tags="math graphing tools">
+          <h3>Graph Tools</h3>
+          <p>Interactive math visualizations.</p>
+        </a>
+        <a class="card" href="https://ites1f.github.io/play/" target="_blank" rel="noopener" data-tags="games webgl canvas">
+          <h3>Playground</h3>
+          <p>Web games & interactive toys.</p>
+        </a>
+        <a class="card" href="https://ites1f.github.io/contact/" target="_blank" rel="noopener" data-tags="contact about">
+          <h3>Contact & About</h3>
+          <p>Who I am, how to reach me.</p>
+        </a>
+      </section>
+    </main>
+
+    <footer aria-label="Site footer">
+      <div>© <span id="year"></span> ites1f. <a href="mailto:hello@example.com">Contact</a> · <a href="/sitemap.xml">Sitemap</a> · <a href="/robots.txt">Robots</a></div>
+      <div>Last updated: <time id="updated" aria-live="polite"></time></div>
+    </footer>
+  </div>
+
+  <script>
+    // ——— Theme toggle with persistence ———
+    (function(){
+      const btn = document.getElementById('themeBtn');
+      const saved = localStorage.getItem('theme');
+      const prefersDark = matchMedia('(prefers-color-scheme: dark)').matches;
+      const initial = saved || (prefersDark ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', initial);
+      btn.setAttribute('aria-pressed', initial === 'dark');
+
+      btn.addEventListener('click', () => {
+        const now = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', now);
+        localStorage.setItem('theme', now);
+        btn.setAttribute('aria-pressed', now === 'dark');
+      });
+    })();
+
+    // ——— Live filter for cards ———
+    (function(){
+      const q = document.getElementById('q');
+      const cards = Array.from(document.querySelectorAll('#cards .card'));
+      const text = el => (el.textContent + ' ' + (el.getAttribute('data-tags')||'')).toLowerCase();
+      q.addEventListener('input', () => {
+        const v = q.value.trim().toLowerCase();
+        cards.forEach(c => c.style.display = text(c).includes(v) ? '' : 'none');
+      });
+    })();
+
+    // ——— Footer dynamic bits ———
+    document.getElementById('year').textContent = new Date().getFullYear();
+    document.getElementById('updated').textContent = new Date(document.lastModified).toLocaleString();
+  </script>
+
+  <!-- Optional: JSON-LD for better search previews (edit name/url/logo) -->
+  <script type="application/ld+json">
+  {
+    "@context":"https://schema.org",
+    "@type":"CollectionPage",
+    "name":"ites1f — Web Stuff Hub",
+    "url":"https://example.com/",
+    "about":"Landing page linking to 9 websites and projects.",
+    "publisher":{"@type":"Person","name":"ites1f"}
+  }
+  </script>
+</body>
+</html>
