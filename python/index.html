@@ -61,11 +61,52 @@
   </div>
 
   <script>
+    // ---------- CONFIG ----------
+    // Change this if your file lives under a different folder.
+    // Example desired URL: https://ites1f.github.io/ites1f/python/<room>
+    const BASE_PATH = "/ites1f/python/"; // must start and end with "/"
+
+    // Turn any user input into a safe path segment
+    function slugifyRoom(str) {
+      // trim, collapse spaces, replace with "-", drop illegal path chars
+      return encodeURIComponent(
+        str.trim()
+           .replace(/\s+/g, "-")
+           .replace(/[\/?#%]+/g, "-")
+      );
+    }
+
+    function getRoomFromPath() {
+      // Returns room from /ites1f/python/<room> (no trailing slash),
+      // or from hash (#room) if present.
+      const { pathname, hash } = location;
+
+      // Prefer clean PATH room (pretty URL)
+      if (pathname.startsWith(BASE_PATH)) {
+        const tail = pathname.slice(BASE_PATH.length); // "<room>" or "" or "anything/else"
+        if (tail && !tail.includes("/")) {
+          try { return decodeURIComponent(tail); } catch { return tail; }
+        }
+      }
+      // Fallback to hash-based
+      if (hash && hash.length > 1) {
+        try { return decodeURIComponent(hash.slice(1)); } catch { return hash.slice(1); }
+      }
+      return "";
+    }
+
+    function setPrettyURL(room) {
+      // Update URL to /ites1f/python/<room> (no page reload)
+      const pretty = BASE_PATH + slugifyRoom(room);
+      history.replaceState(null, "", pretty);
+    }
+
     // ---------- Monaco boot ----------
     let editor;
     const defaultCode = `# Collaborative Python file
-# Open this page on two devices with the SAME "room-id"
-# You'll see real-time edits. Click "Run" to execute with Pyodide.
+# Share this URL to collaborate:
+#   https://ites1f.github.io/ites1f/python/<room>
+# Replace <room> with a name, or click Connect to set it.
 
 def greet(name):
     return "Hello, " + name + "!"
@@ -86,10 +127,11 @@ print(greet("world"))
       document.getElementById('connectBtn').disabled = false;
       document.getElementById('runBtn').disabled = false;
 
-      if (location.hash) {
-        const roomFromHash = decodeURIComponent(location.hash.slice(1));
-        document.getElementById('room').value = roomFromHash;
-        connect(roomFromHash);
+      // Auto-connect if URL encodes a room
+      const roomFromURL = getRoomFromPath();
+      if (roomFromURL) {
+        document.getElementById('room').value = roomFromURL;
+        connect(roomFromURL);
       }
     });
 
@@ -100,6 +142,7 @@ print(greet("world"))
       if (!room) { alert("Enter a room id"); return; }
       if (!editor) { alert("Editor not ready yet"); return; }
 
+      // Clean previous session if any
       if (monacoBinding && monacoBinding.destroy) monacoBinding.destroy();
       if (provider) provider.destroy();
 
@@ -114,7 +157,7 @@ print(greet("world"))
 
       awareness = provider.awareness;
 
-      // Set local presence so you count as a peer
+      // give yourself presence so peers count includes you
       const me = {
         name: "guest" + Math.floor(Math.random() * 9999),
         color: "#" + Math.floor(Math.random()*0xffffff).toString(16).padStart(6,"0")
@@ -140,9 +183,11 @@ print(greet("world"))
         editor.setValue(ytext.toString());
       }
 
+      // UI + pretty URL (/ites1f/python/<room>)
       document.getElementById('status').textContent = `Room: ${room}`;
-      history.replaceState(null, "", "#" + encodeURIComponent(room));
+      setPrettyURL(room);
 
+      // Peers indicator
       const peersEl = document.getElementById('peers');
       const updatePeers = () => {
         peersEl.textContent = `peers: ${awareness.getStates().size}`;
@@ -156,7 +201,8 @@ print(greet("world"))
     }
 
     document.getElementById('connectBtn').addEventListener('click', () => {
-      connect(document.getElementById('room').value.trim());
+      const room = document.getElementById('room').value.trim();
+      connect(room);
     });
 
     // ---------- Run via Pyodide ----------
