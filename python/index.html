@@ -8,20 +8,20 @@
     :root { --bg:#0b1220; --ink:#e9eefc; --panel:#111827; --muted:#9aa4bf; --border:#1f2937; }
     html, body { height:100%; margin:0; background:var(--bg); color:var(--ink); font-family:ui-sans-serif,system-ui; }
     .topbar {
-      display:flex; gap:12px; align-items:center; padding:10px 12px; background:var(--panel);
-      position:sticky; top:0; z-index:5; border-bottom:1px solid var(--border);
+      display:flex; gap:10px; align-items:center; padding:10px 12px; background:var(--panel);
+      position:sticky; top:0; z-index:5; border-bottom:1px solid var(--border); flex-wrap:wrap;
     }
-    .label { color:var(--muted); margin-right:6px; }
+    .topbar .group { display:flex; gap:8px; align-items:center; }
+    .label { color:var(--muted); margin-right:4px; }
     .topbar input, .topbar button {
       background:#0f172a; color:var(--ink); border:1px solid var(--border); border-radius:8px; padding:8px 10px;
     }
     .topbar button { cursor:pointer }
     .status { font-size:12px; color:var(--muted); }
 
-    /* Layout: editor (left) + chat (right) */
     .main {
-      position: absolute; top:52px; left:0; right:0; bottom:0;
-      display:flex; gap:0; overflow:hidden;
+      position: absolute; top:58px; left:0; right:0; bottom:0;
+      display:flex; overflow:hidden;
     }
     .editor-wrap { flex:1 1 auto; display:flex; flex-direction:column; min-width:0; }
     #editor { flex:1 1 auto; min-height:0; width:100%; }
@@ -34,16 +34,12 @@
       padding:10px 12px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;
       color:var(--muted); font-size:13px;
     }
-    .chat-log {
-      flex:1 1 auto; overflow:auto; padding:10px 12px; line-height:1.45;
-    }
+    .chat-log { flex:1 1 auto; overflow:auto; padding:10px 12px; line-height:1.45; }
     .msg { margin:6px 0; }
     .meta { font-size:11px; color:var(--muted); }
-    .me { color:#93c5fd; }        /* your name tint */
-    .them { color:#a7f3d0; }      /* others tint */
-    .chat-input {
-      padding:10px; border-top:1px solid var(--border); display:flex; gap:8px; background:#0b1327;
-    }
+    .me { color:#93c5fd; }
+    .them { color:#a7f3d0; }
+    .chat-input { padding:10px; border-top:1px solid var(--border); display:flex; gap:8px; background:#0b1327; }
     .chat-input input {
       flex:1; background:#0b1220; color:var(--ink); border:1px solid var(--border); border-radius:8px; padding:10px;
     }
@@ -55,24 +51,18 @@
       white-space:pre-wrap; font-family:ui-monospace, Menlo, Monaco, "Courier New", monospace;
       background:#0f172a; padding:10px; border-top:1px solid var(--border); max-height:40vh; overflow:auto;
     }
-    .bottom { position:fixed; left:0; right:22%; bottom:0; } /* keep out from under chat */
-    @media (max-width:900px){
-      .chat{ flex-basis:28%; }
-      .bottom{ right:28%; }
-    }
-    @media (max-width:720px){
-      .chat{ display:none; }       /* hide chat on very small screens */
-      .bottom{ right:0; }
-    }
+    .bottom { position:fixed; left:0; right:22%; bottom:0; }
+    @media (max-width:900px){ .chat{ flex-basis:28%; } .bottom{ right:28%; } }
+    @media (max-width:720px){ .chat{ display:none; } .bottom{ right:0; } }
   </style>
 
-  <!-- Monaco Editor -->
+  <!-- Monaco -->
   <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
 
-  <!-- Supabase JS (ESM) -->
+  <!-- Supabase (ESM) -->
   <script type="module" crossorigin src="https://esm.sh/@supabase/supabase-js@2"></script>
 
-  <!-- Pyodide (Python in browser) -->
+  <!-- Pyodide -->
   <script>
     const pyodideReady = (async () => {
       const s = document.createElement('script');
@@ -85,12 +75,19 @@
 </head>
 <body>
   <div class="topbar">
-    <span class="label">Room:</span>
-    <input id="room" placeholder="room-id (same id = same file)"/>
-    <button id="connectBtn" disabled>Connect</button>
-    <button id="runBtn" disabled>Run (Pyodide)</button>
-    <span class="status" id="status">Room:</span>
-    <span class="status" id="peers">peers: 0</span>
+    <div class="group">
+      <span class="label">Room</span>
+      <input id="room" placeholder="room-id"/>
+      <button id="connectBtn" disabled>Connect</button>
+      <span class="status" id="status">Room:</span>
+      <span class="status" id="peers">peers: 0</span>
+    </div>
+    <div class="group">
+      <span class="label">Name</span>
+      <input id="nameInput" placeholder="your display name"/>
+      <button id="saveNameBtn">Save</button>
+      <button id="runBtn" disabled>Run (Pyodide)</button>
+    </div>
   </div>
 
   <div class="main">
@@ -118,26 +115,38 @@
   <script type="module">
     import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-    // 🚨 Replace with your Supabase project details
-    const SUPABASE_URL = "https://rcnpjkurmypvcwvpdaay.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJjbnBqa3VybXlwdmN3dnBkYWF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg4NzA5NjAsImV4cCI6MjA3NDQ0Njk2MH0.5FBoK6nQ0ojmGfr8yfj7jOGvMLij0yIxF-fmqMlDHuQ";
+    // 🔧 Replace these:
+    const SUPABASE_URL = "https://YOUR-PROJECT.supabase.co";
+    const SUPABASE_ANON_KEY = "YOUR-ANON-KEY";
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-    // --- Utils ---
-    const $ = sel => document.querySelector(sel);
+    // ---- Utilities ----
+    const $ = s => document.querySelector(s);
     const fmtTime = ts => new Date(ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
     const debounce = (fn, ms)=>{ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; };
+    const escapeHTML = s => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-    // --- Identity / Presence ---
-    const clientId = crypto.randomUUID();
-    const myName = "guest" + Math.floor(Math.random()*9999);
+    // ---- Persisted identity & room ----
+    const LS_NAME = "collab_name";
+    const LS_ROOM = "collab_room";
+    const LS_ID   = "collab_client_id";
+    const LS_DRAFT_PREFIX = "collab_draft_"; // per-room draft
+
+    let clientId = localStorage.getItem(LS_ID);
+    if (!clientId) { clientId = crypto.randomUUID(); localStorage.setItem(LS_ID, clientId); }
+
+    let myName = localStorage.getItem(LS_NAME) || ("guest" + Math.floor(Math.random()*9999));
+    $("#nameInput").value = myName;
     $("#meName").textContent = myName;
 
-    // --- Monaco init ---
+    let initialRoom = localStorage.getItem(LS_ROOM) || "";
+
+    // ---- Supabase ----
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // ---- Monaco init ----
     let editor;
     const defaultCode = `# Collaborative Python editor + chat
-# Share your room name, edit together, and chat on the right. Have fun!
+# Your name is persisted (top right), and you'll auto-rejoin your last room after refresh.
 
 def greet(name):
     return "Hello, " + name + "!"
@@ -147,8 +156,9 @@ print(greet("world"))
 
     require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs' } });
     require(["vs/editor/editor.main"], function () {
+      const roomDraft = localStorage.getItem(LS_DRAFT_PREFIX + initialRoom);
       editor = monaco.editor.create(document.getElementById('editor'), {
-        value: defaultCode,
+        value: roomDraft || defaultCode,
         language: "python",
         theme: "vs-dark",
         automaticLayout: true,
@@ -157,14 +167,25 @@ print(greet("world"))
       });
       $("#connectBtn").disabled = false;
       $("#runBtn").disabled = false;
+
+      // Save draft per-room locally on each change (even before connect)
+      editor.onDidChangeModelContent(debounce(() => {
+        const r = $("#room").value.trim() || initialRoom || "";
+        if (r) localStorage.setItem(LS_DRAFT_PREFIX + r, editor.getValue());
+      }, 300));
+
+      // Auto-rejoin last room after refresh
+      if (initialRoom) {
+        $("#room").value = initialRoom;
+        connect(initialRoom);
+      }
     });
 
-    // --- Realtime: doc + chat in same channel ---
+    // ---- Realtime: doc + chat in same channel ----
     let channel = null;
     let rev = 0, lastRemoteRev = 0;
     let suppressRemote = false;
 
-    // in-memory recent chat buffer so newcomers can get a small backlog
     const CHAT_BUFFER_LIMIT = 50;
     let chatBuffer = [];
 
@@ -176,17 +197,19 @@ print(greet("world"))
       div.className = "msg";
       const whoClass = msg.fromName === myName ? "me" : "them";
       div.innerHTML = `
-        <div class="meta"><span class="${whoClass}">${msg.fromName}</span> • ${fmtTime(msg.ts)}</div>
+        <div class="meta"><span class="${whoClass}">${escapeHTML(msg.fromName)}</span> • ${fmtTime(msg.ts)}</div>
         <div>${escapeHTML(msg.text)}</div>
       `;
       log.appendChild(div);
       log.scrollTop = log.scrollHeight;
     }
-    function escapeHTML(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
     async function connect(room) {
       if (!room) { alert("Enter a room id"); return; }
       if (channel) await channel.unsubscribe();
+
+      // persist chosen room so refresh auto-rejoins
+      localStorage.setItem(LS_ROOM, room);
 
       channel = supabase.channel(`python-${room}`, {
         config: { broadcast: { self:false }, presence: { key: clientId } }
@@ -198,7 +221,7 @@ print(greet("world"))
         $("#peers").textContent = `peers: ${Object.keys(state).length}`;
       });
 
-      // --- Document sync ---
+      // Document receive
       channel.on("broadcast", { event: "doc" }, ({ payload }) => {
         if (!payload || payload.from === clientId) return;
         if (payload.rev > lastRemoteRev) {
@@ -208,16 +231,18 @@ print(greet("world"))
           editor.setValue(String(payload.doc));
           if (sel) editor.setSelection(sel);
           suppressRemote = false;
+          // update local draft
+          localStorage.setItem(LS_DRAFT_PREFIX + room, editor.getValue());
         }
       });
 
-      // --- Chat receive ---
+      // Chat receive
       channel.on("broadcast", { event: "chat" }, ({ payload }) => {
         if (!payload) return;
         appendChat(payload);
       });
 
-      // --- Backlog: newcomers request recent chat + doc snapshot ---
+      // Newcomer sync flow
       channel.on("broadcast", { event: "sync_req" }, ({ payload }) => {
         if (!payload || payload.from === clientId) return;
         // send doc snapshot
@@ -232,41 +257,68 @@ print(greet("world"))
 
       channel.on("broadcast", { event: "chat_dump" }, ({ payload }) => {
         if (!payload) return;
-        // merge dump (avoid duplicating if already have)
         for (const m of payload.items || []) appendChat(m);
       });
 
       await channel.subscribe((status) => {
         $("#status").textContent = `Room: ${room} (${status})`;
       });
+
+      // Track presence with your (editable) name
       await channel.track({ user: { id: clientId, name: myName } });
 
-      // Ask for sync from existing peers
+      // Ask others for the latest doc + chat
       channel.send({ type:"broadcast", event:"sync_req", payload:{ from: clientId } });
+
+      // Seed from local draft if nobody replies soon
+      const seedDraft = localStorage.getItem(LS_DRAFT_PREFIX + room);
+      setTimeout(() => {
+        if (lastRemoteRev === 0 && seedDraft) {
+          // broadcast your draft as initial content
+          editor.setValue(seedDraft);
+          rev += 1;
+          channel.send({ type:"broadcast", event:"doc",
+            payload:{ doc: seedDraft, rev, from: clientId, ts: Date.now() }
+          });
+        }
+      }, 800);
 
       // Broadcast doc on local change (debounced)
       editor.onDidChangeModelContent(debounce(() => {
         if (suppressRemote) return;
         rev += 1;
+        const txt = editor.getValue();
+        localStorage.setItem(LS_DRAFT_PREFIX + room, txt);
         channel.send({ type:"broadcast", event:"doc",
-          payload:{ doc: editor.getValue(), rev, from: clientId, ts: Date.now() }
+          payload:{ doc: txt, rev, from: clientId, ts: Date.now() }
         });
       }, 250));
     }
 
-    // UI: connect
+    // ----- UI: connect -----
     $("#connectBtn").addEventListener('click', () => {
-      const room = $("#room").value.trim();
-      connect(room);
+      connect($("#room").value.trim());
     });
 
-    // UI: chat send
+    // ----- UI: change name (persist + update presence) -----
+    $("#saveNameBtn").addEventListener('click', async () => {
+      const newName = $("#nameInput").value.trim() || ("guest" + Math.floor(Math.random()*9999));
+      myName = newName;
+      $("#meName").textContent = myName;
+      localStorage.setItem(LS_NAME, myName);
+      if (channel) {
+        // update presence with new name
+        await channel.track({ user: { id: clientId, name: myName } });
+      }
+    });
+
+    // ----- Chat send -----
     function sendChat(){
       const text = $("#chatText").value.trim();
       if (!text || !channel) return;
       const msg = { text, fromId: clientId, fromName: myName, ts: Date.now() };
       channel.send({ type:"broadcast", event:"chat", payload: msg });
-      appendChat(msg);                 // optimistic local append
+      appendChat(msg); // local optimistic
       $("#chatText").value = "";
       $("#chatText").focus();
     }
@@ -278,10 +330,8 @@ print(greet("world"))
     // ----- Run Python -----
     const output = $("#output");
     const bottom = $("#bottom");
-    function showOutput(text) {
-      bottom.style.display = 'block';
-      output.textContent = text;
-    }
+    function showOutput(text) { bottom.style.display = 'block'; output.textContent = text; }
+
     $("#runBtn").addEventListener('click', async () => {
       showOutput("⏳ Running...");
       try {
