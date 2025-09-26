@@ -1,9 +1,9 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Collaborative Python Editor</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Collaborative Python Editor (Supabase)</title>
   <style>
     :root { --bg:#0b1220; --ink:#e9eefc; --panel:#111827; --muted:#9aa4bf; }
     html, body { height:100%; margin:0; background:var(--bg); color:var(--ink); font-family:ui-sans-serif,system-ui; }
@@ -19,21 +19,19 @@
     .status { font-size:12px; color:var(--muted); }
     #editor { height: calc(100vh - 52px); width:100%; }
     #output {
-      white-space:pre-wrap; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, "Courier New", monospace;
+      white-space:pre-wrap; font-family:ui-monospace, Menlo, Monaco, "Courier New", monospace;
       background:#0f172a; padding:10px; border-top:1px solid #1f2937; max-height:40vh; overflow:auto;
     }
     .bottom { position:fixed; left:0; right:0; bottom:0; }
   </style>
 
-  <!-- Monaco loader -->
+  <!-- Monaco Editor -->
   <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
 
-  <!-- Yjs + providers -->
-  <script src="https://cdn.jsdelivr.net/npm/yjs@13.6.18/dist/yjs.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/y-webrtc@10.6.3/dist/y-webrtc.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/y-monaco@0.4.3/dist/y-monaco.js"></script>
+  <!-- Supabase JS -->
+  <script type="module" crossorigin src="https://esm.sh/@supabase/supabase-js@2"></script>
 
-  <!-- Pyodide (lazy-loaded) -->
+  <!-- Pyodide (Python in browser) -->
   <script>
     const pyodideReady = (async () => {
       const s = document.createElement('script');
@@ -47,7 +45,7 @@
 <body>
   <div class="topbar">
     <span class="label">Room:</span>
-    <input id="room" placeholder="room-id (same id = same file)" />
+    <input id="room" placeholder="room-id (same id = same file)"/>
     <button id="connectBtn" disabled>Connect</button>
     <button id="runBtn" disabled>Run (Pyodide)</button>
     <span class="status" id="status">Room:</span>
@@ -60,53 +58,19 @@
     <div id="output"></div>
   </div>
 
-  <script>
-    // ---------- CONFIG ----------
-    // Change this if your file lives under a different folder.
-    // Example desired URL: https://ites1f.github.io/ites1f/python/<room>
-    const BASE_PATH = "/ites1f/python/"; // must start and end with "/"
+  <script type="module">
+    import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-    // Turn any user input into a safe path segment
-    function slugifyRoom(str) {
-      // trim, collapse spaces, replace with "-", drop illegal path chars
-      return encodeURIComponent(
-        str.trim()
-           .replace(/\s+/g, "-")
-           .replace(/[\/?#%]+/g, "-")
-      );
-    }
+    // 🚨 Replace with your Supabase project details
+    const SUPABASE_URL = "https://rcnpjkurmypvcwvpdaay.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJjbnBqa3VybXlwdmN3dnBkYWF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg4NzA5NjAsImV4cCI6MjA3NDQ0Njk2MH0.5FBoK6nQ0ojmGfr8yfj7jOGvMLij0yIxF-fmqMlDHuQ";
 
-    function getRoomFromPath() {
-      // Returns room from /ites1f/python/<room> (no trailing slash),
-      // or from hash (#room) if present.
-      const { pathname, hash } = location;
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-      // Prefer clean PATH room (pretty URL)
-      if (pathname.startsWith(BASE_PATH)) {
-        const tail = pathname.slice(BASE_PATH.length); // "<room>" or "" or "anything/else"
-        if (tail && !tail.includes("/")) {
-          try { return decodeURIComponent(tail); } catch { return tail; }
-        }
-      }
-      // Fallback to hash-based
-      if (hash && hash.length > 1) {
-        try { return decodeURIComponent(hash.slice(1)); } catch { return hash.slice(1); }
-      }
-      return "";
-    }
-
-    function setPrettyURL(room) {
-      // Update URL to /ites1f/python/<room> (no page reload)
-      const pretty = BASE_PATH + slugifyRoom(room);
-      history.replaceState(null, "", pretty);
-    }
-
-    // ---------- Monaco boot ----------
     let editor;
-    const defaultCode = `# Collaborative Python file
-# Share this URL to collaborate:
-#   https://ites1f.github.io/ites1f/python/<room>
-# Replace <room> with a name, or click Connect to set it.
+    const defaultCode = `# Collaborative Python editor
+# Type in here, share your room link, and edit together!
+# Click Run to execute Python with Pyodide (in your browser).
 
 def greet(name):
     return "Hello, " + name + "!"
@@ -114,6 +78,7 @@ def greet(name):
 print(greet("world"))
 `;
 
+    // Init Monaco
     require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs' } });
     require(["vs/editor/editor.main"], function () {
       editor = monaco.editor.create(document.getElementById('editor'), {
@@ -126,105 +91,81 @@ print(greet("world"))
       });
       document.getElementById('connectBtn').disabled = false;
       document.getElementById('runBtn').disabled = false;
-
-      // Auto-connect if URL encodes a room
-      const roomFromURL = getRoomFromPath();
-      if (roomFromURL) {
-        document.getElementById('room').value = roomFromURL;
-        connect(roomFromURL);
-      }
     });
 
-    // ---------- Collab (Yjs + y-webrtc) ----------
-    let ydoc, provider, ytext, awareness, monacoBinding;
+    // ----- Collaboration -----
+    let channel = null;
+    let clientId = crypto.randomUUID();
+    let rev = 0, lastRemoteRev = 0;
+    let suppressRemote = false;
 
-    function connect(room) {
+    async function connect(room) {
       if (!room) { alert("Enter a room id"); return; }
-      if (!editor) { alert("Editor not ready yet"); return; }
 
-      // Clean previous session if any
-      if (monacoBinding && monacoBinding.destroy) monacoBinding.destroy();
-      if (provider) provider.destroy();
-
-      ydoc = new Y.Doc();
-      provider = new Y.WebrtcProvider(room, ydoc, {
-        signaling: [
-          'wss://signaling.yjs.dev',
-          'wss://y-webrtc-signaling-eu.herokuapp.com',
-          'wss://y-webrtc-signaling-us.herokuapp.com'
-        ]
+      if (channel) await channel.unsubscribe();
+      channel = supabase.channel(`python-${room}`, {
+        config: { broadcast: { self:false }, presence: { key: clientId } }
       });
 
-      awareness = provider.awareness;
-
-      // give yourself presence so peers count includes you
-      const me = {
-        name: "guest" + Math.floor(Math.random() * 9999),
-        color: "#" + Math.floor(Math.random()*0xffffff).toString(16).padStart(6,"0")
-      };
-      awareness.setLocalState({ user: me });
-
-      ytext = ydoc.getText("file.py");
-
-      const MonacoBindingCtor =
-        (window.yMonaco && window.yMonaco.MonacoBinding) ||
-        (window.YMonaco && window.YMonaco.MonacoBinding);
-
-      monacoBinding = new MonacoBindingCtor(
-        ytext,
-        editor.getModel(),
-        new Set([editor]),
-        awareness
-      );
-
-      if (ytext.length === 0) {
-        ytext.insert(0, editor.getValue());
-      } else {
-        editor.setValue(ytext.toString());
-      }
-
-      // UI + pretty URL (/ites1f/python/<room>)
-      document.getElementById('status').textContent = `Room: ${room}`;
-      setPrettyURL(room);
-
-      // Peers indicator
+      // Presence
       const peersEl = document.getElementById('peers');
-      const updatePeers = () => {
-        peersEl.textContent = `peers: ${awareness.getStates().size}`;
-      };
-      awareness.on('update', updatePeers);
-      provider.on('status', e => {
-        document.getElementById('status').textContent =
-          `Room: ${room} (${e.status})`;
+      channel.on("presence", { event: "sync" }, () => {
+        const state = channel.presenceState();
+        peersEl.textContent = `peers: ${Object.keys(state).length}`;
       });
-      updatePeers();
+
+      // Broadcast handler
+      channel.on("broadcast", { event: "doc" }, ({ payload }) => {
+        if (!payload || payload.from === clientId) return;
+        if (payload.rev > lastRemoteRev) {
+          lastRemoteRev = payload.rev;
+          suppressRemote = true;
+          const sel = editor.getSelection();
+          editor.setValue(payload.doc);
+          if (sel) editor.setSelection(sel);
+          suppressRemote = false;
+        }
+      });
+
+      await channel.subscribe((status) => {
+        document.getElementById('status').textContent = `Room: ${room} (${status})`;
+      });
+      await channel.track({ user: { id: clientId, name: "guest" + Math.floor(Math.random()*9999) } });
+
+      // Send updates on change
+      editor.onDidChangeModelContent(() => {
+        if (suppressRemote) return;
+        rev += 1;
+        channel.send({
+          type: "broadcast",
+          event: "doc",
+          payload: { doc: editor.getValue(), rev, from: clientId }
+        });
+      });
     }
 
     document.getElementById('connectBtn').addEventListener('click', () => {
-      const room = document.getElementById('room').value.trim();
-      connect(room);
+      connect(document.getElementById('room').value.trim());
     });
 
-    // ---------- Run via Pyodide ----------
-    const bottom = document.getElementById('bottom');
+    // ----- Run Python -----
     const output = document.getElementById('output');
+    const bottom = document.getElementById('bottom');
     function showOutput(text) {
       bottom.style.display = 'block';
       output.textContent = text;
     }
-
     document.getElementById('runBtn').addEventListener('click', async () => {
-      showOutput("⏳ Loading Pyodide / running code...");
+      showOutput("⏳ Running...");
       try {
         const pyodide = await pyodideReady;
         let stdout = "";
-        pyodide.setStdout({ batched: s => { stdout += s; } });
-        pyodide.setStderr({ batched: s => { stdout += s; } });
-        const code = editor.getValue();
-        await pyodide.runPythonAsync(code);
+        pyodide.setStdout({ batched: s => stdout += s });
+        pyodide.setStderr({ batched: s => stdout += s });
+        await pyodide.runPythonAsync(editor.getValue());
         showOutput(stdout || "✅ Finished (no output)");
       } catch (err) {
-        showOutput("❌ Error:\n" + (err?.message || String(err)));
+        showOutput("❌ Error:\n" + err.message);
       }
     });
   </script>
