@@ -3,32 +3,73 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Collaborative Python Editor (Supabase)</title>
+  <title>Collaborative Python Editor + Chat (Supabase)</title>
   <style>
-    :root { --bg:#0b1220; --ink:#e9eefc; --panel:#111827; --muted:#9aa4bf; }
+    :root { --bg:#0b1220; --ink:#e9eefc; --panel:#111827; --muted:#9aa4bf; --border:#1f2937; }
     html, body { height:100%; margin:0; background:var(--bg); color:var(--ink); font-family:ui-sans-serif,system-ui; }
     .topbar {
       display:flex; gap:12px; align-items:center; padding:10px 12px; background:var(--panel);
-      position:sticky; top:0; z-index:5; border-bottom:1px solid #1f2937;
+      position:sticky; top:0; z-index:5; border-bottom:1px solid var(--border);
     }
     .label { color:var(--muted); margin-right:6px; }
     .topbar input, .topbar button {
-      background:#0f172a; color:var(--ink); border:1px solid #1f2937; border-radius:8px; padding:8px 10px;
+      background:#0f172a; color:var(--ink); border:1px solid var(--border); border-radius:8px; padding:8px 10px;
     }
     .topbar button { cursor:pointer }
     .status { font-size:12px; color:var(--muted); }
-    #editor { height: calc(100vh - 52px); width:100%; }
+
+    /* Layout: editor (left) + chat (right) */
+    .main {
+      position: absolute; top:52px; left:0; right:0; bottom:0;
+      display:flex; gap:0; overflow:hidden;
+    }
+    .editor-wrap { flex:1 1 auto; display:flex; flex-direction:column; min-width:0; }
+    #editor { flex:1 1 auto; min-height:0; width:100%; }
+
+    .chat {
+      flex:0 0 22%; max-width:420px; min-width:260px;
+      border-left:1px solid var(--border); background:#0f172a; display:flex; flex-direction:column;
+    }
+    .chat-header {
+      padding:10px 12px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;
+      color:var(--muted); font-size:13px;
+    }
+    .chat-log {
+      flex:1 1 auto; overflow:auto; padding:10px 12px; line-height:1.45;
+    }
+    .msg { margin:6px 0; }
+    .meta { font-size:11px; color:var(--muted); }
+    .me { color:#93c5fd; }        /* your name tint */
+    .them { color:#a7f3d0; }      /* others tint */
+    .chat-input {
+      padding:10px; border-top:1px solid var(--border); display:flex; gap:8px; background:#0b1327;
+    }
+    .chat-input input {
+      flex:1; background:#0b1220; color:var(--ink); border:1px solid var(--border); border-radius:8px; padding:10px;
+    }
+    .chat-input button {
+      background:#111827; color:var(--ink); border:1px solid var(--border); border-radius:8px; padding:10px 14px; cursor:pointer;
+    }
+
     #output {
       white-space:pre-wrap; font-family:ui-monospace, Menlo, Monaco, "Courier New", monospace;
-      background:#0f172a; padding:10px; border-top:1px solid #1f2937; max-height:40vh; overflow:auto;
+      background:#0f172a; padding:10px; border-top:1px solid var(--border); max-height:40vh; overflow:auto;
     }
-    .bottom { position:fixed; left:0; right:0; bottom:0; }
+    .bottom { position:fixed; left:0; right:22%; bottom:0; } /* keep out from under chat */
+    @media (max-width:900px){
+      .chat{ flex-basis:28%; }
+      .bottom{ right:28%; }
+    }
+    @media (max-width:720px){
+      .chat{ display:none; }       /* hide chat on very small screens */
+      .bottom{ right:0; }
+    }
   </style>
 
   <!-- Monaco Editor -->
   <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
 
-  <!-- Supabase JS -->
+  <!-- Supabase JS (ESM) -->
   <script type="module" crossorigin src="https://esm.sh/@supabase/supabase-js@2"></script>
 
   <!-- Pyodide (Python in browser) -->
@@ -52,7 +93,23 @@
     <span class="status" id="peers">peers: 0</span>
   </div>
 
-  <div id="editor"></div>
+  <div class="main">
+    <div class="editor-wrap">
+      <div id="editor"></div>
+    </div>
+
+    <aside class="chat">
+      <div class="chat-header">
+        <div>💬 Room Chat</div>
+        <div id="who" class="meta">me: <span id="meName"></span></div>
+      </div>
+      <div id="chatLog" class="chat-log"></div>
+      <div class="chat-input">
+        <input id="chatText" placeholder="Message #room (Enter to send)"/>
+        <button id="sendBtn">Send</button>
+      </div>
+    </aside>
+  </div>
 
   <div class="bottom" id="bottom" style="display:none;">
     <div id="output"></div>
@@ -67,10 +124,20 @@
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+    // --- Utils ---
+    const $ = sel => document.querySelector(sel);
+    const fmtTime = ts => new Date(ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    const debounce = (fn, ms)=>{ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; };
+
+    // --- Identity / Presence ---
+    const clientId = crypto.randomUUID();
+    const myName = "guest" + Math.floor(Math.random()*9999);
+    $("#meName").textContent = myName;
+
+    // --- Monaco init ---
     let editor;
-    const defaultCode = `# Collaborative Python editor
-# Type in here, share your room link, and edit together!
-# Click Run to execute Python with Pyodide (in your browser).
+    const defaultCode = `# Collaborative Python editor + chat
+# Share your room name, edit together, and chat on the right. Have fun!
 
 def greet(name):
     return "Hello, " + name + "!"
@@ -78,7 +145,6 @@ def greet(name):
 print(greet("world"))
 `;
 
-    // Init Monaco
     require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs' } });
     require(["vs/editor/editor.main"], function () {
       editor = monaco.editor.create(document.getElementById('editor'), {
@@ -89,73 +155,134 @@ print(greet("world"))
         fontSize: 14,
         minimap: { enabled: true }
       });
-      document.getElementById('connectBtn').disabled = false;
-      document.getElementById('runBtn').disabled = false;
+      $("#connectBtn").disabled = false;
+      $("#runBtn").disabled = false;
     });
 
-    // ----- Collaboration -----
+    // --- Realtime: doc + chat in same channel ---
     let channel = null;
-    let clientId = crypto.randomUUID();
     let rev = 0, lastRemoteRev = 0;
     let suppressRemote = false;
 
+    // in-memory recent chat buffer so newcomers can get a small backlog
+    const CHAT_BUFFER_LIMIT = 50;
+    let chatBuffer = [];
+
+    function appendChat(msg){
+      chatBuffer.push(msg);
+      if (chatBuffer.length > CHAT_BUFFER_LIMIT) chatBuffer.shift();
+      const log = $("#chatLog");
+      const div = document.createElement("div");
+      div.className = "msg";
+      const whoClass = msg.fromName === myName ? "me" : "them";
+      div.innerHTML = `
+        <div class="meta"><span class="${whoClass}">${msg.fromName}</span> • ${fmtTime(msg.ts)}</div>
+        <div>${escapeHTML(msg.text)}</div>
+      `;
+      log.appendChild(div);
+      log.scrollTop = log.scrollHeight;
+    }
+    function escapeHTML(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
     async function connect(room) {
       if (!room) { alert("Enter a room id"); return; }
-
       if (channel) await channel.unsubscribe();
+
       channel = supabase.channel(`python-${room}`, {
         config: { broadcast: { self:false }, presence: { key: clientId } }
       });
 
-      // Presence
-      const peersEl = document.getElementById('peers');
+      // Presence → peers
       channel.on("presence", { event: "sync" }, () => {
         const state = channel.presenceState();
-        peersEl.textContent = `peers: ${Object.keys(state).length}`;
+        $("#peers").textContent = `peers: ${Object.keys(state).length}`;
       });
 
-      // Broadcast handler
+      // --- Document sync ---
       channel.on("broadcast", { event: "doc" }, ({ payload }) => {
         if (!payload || payload.from === clientId) return;
         if (payload.rev > lastRemoteRev) {
           lastRemoteRev = payload.rev;
           suppressRemote = true;
           const sel = editor.getSelection();
-          editor.setValue(payload.doc);
+          editor.setValue(String(payload.doc));
           if (sel) editor.setSelection(sel);
           suppressRemote = false;
         }
       });
 
-      await channel.subscribe((status) => {
-        document.getElementById('status').textContent = `Room: ${room} (${status})`;
+      // --- Chat receive ---
+      channel.on("broadcast", { event: "chat" }, ({ payload }) => {
+        if (!payload) return;
+        appendChat(payload);
       });
-      await channel.track({ user: { id: clientId, name: "guest" + Math.floor(Math.random()*9999) } });
 
-      // Send updates on change
-      editor.onDidChangeModelContent(() => {
-        if (suppressRemote) return;
-        rev += 1;
-        channel.send({
-          type: "broadcast",
-          event: "doc",
-          payload: { doc: editor.getValue(), rev, from: clientId }
+      // --- Backlog: newcomers request recent chat + doc snapshot ---
+      channel.on("broadcast", { event: "sync_req" }, ({ payload }) => {
+        if (!payload || payload.from === clientId) return;
+        // send doc snapshot
+        channel.send({ type:"broadcast", event:"doc",
+          payload:{ doc: editor.getValue(), rev, from: clientId, ts: Date.now() }
+        });
+        // send chat backlog
+        channel.send({ type:"broadcast", event:"chat_dump",
+          payload:{ from: clientId, items: chatBuffer }
         });
       });
+
+      channel.on("broadcast", { event: "chat_dump" }, ({ payload }) => {
+        if (!payload) return;
+        // merge dump (avoid duplicating if already have)
+        for (const m of payload.items || []) appendChat(m);
+      });
+
+      await channel.subscribe((status) => {
+        $("#status").textContent = `Room: ${room} (${status})`;
+      });
+      await channel.track({ user: { id: clientId, name: myName } });
+
+      // Ask for sync from existing peers
+      channel.send({ type:"broadcast", event:"sync_req", payload:{ from: clientId } });
+
+      // Broadcast doc on local change (debounced)
+      editor.onDidChangeModelContent(debounce(() => {
+        if (suppressRemote) return;
+        rev += 1;
+        channel.send({ type:"broadcast", event:"doc",
+          payload:{ doc: editor.getValue(), rev, from: clientId, ts: Date.now() }
+        });
+      }, 250));
     }
 
-    document.getElementById('connectBtn').addEventListener('click', () => {
-      connect(document.getElementById('room').value.trim());
+    // UI: connect
+    $("#connectBtn").addEventListener('click', () => {
+      const room = $("#room").value.trim();
+      connect(room);
+    });
+
+    // UI: chat send
+    function sendChat(){
+      const text = $("#chatText").value.trim();
+      if (!text || !channel) return;
+      const msg = { text, fromId: clientId, fromName: myName, ts: Date.now() };
+      channel.send({ type:"broadcast", event:"chat", payload: msg });
+      appendChat(msg);                 // optimistic local append
+      $("#chatText").value = "";
+      $("#chatText").focus();
+    }
+    $("#sendBtn").addEventListener('click', sendChat);
+    $("#chatText").addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
     });
 
     // ----- Run Python -----
-    const output = document.getElementById('output');
-    const bottom = document.getElementById('bottom');
+    const output = $("#output");
+    const bottom = $("#bottom");
     function showOutput(text) {
       bottom.style.display = 'block';
       output.textContent = text;
     }
-    document.getElementById('runBtn').addEventListener('click', async () => {
+    $("#runBtn").addEventListener('click', async () => {
       showOutput("⏳ Running...");
       try {
         const pyodide = await pyodideReady;
@@ -165,7 +292,7 @@ print(greet("world"))
         await pyodide.runPythonAsync(editor.getValue());
         showOutput(stdout || "✅ Finished (no output)");
       } catch (err) {
-        showOutput("❌ Error:\n" + err.message);
+        showOutput("❌ Error:\n" + (err?.message || String(err)));
       }
     });
   </script>
